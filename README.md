@@ -1,140 +1,27 @@
-# 🧭 Wayfarer — AI Travel Agent
+# ai-agents
 
-An agentic, full-stack AI travel agent. A Claude backend (the **Wayfarer**
-persona) parses your request, fans out searches across flights, hotels, vacation
-rentals, rental cars, and activities **in parallel**, then synthesizes the
-results into a curated recommendation — streamed token-by-token to a React UI.
+A collection of self-contained AI agents. Each agent lives in its own
+subdirectory with its own dependencies, environment, and README.
 
-```
-You ───▶ Express /api/chat (SSE) ───▶ Claude (tool use)
-                                         │  parallel tool calls
-                 ┌───────────────────────┼───────────────────────┐
-              Kiwi API            Booking/Viator (RapidAPI)   Playwright + stealth
-            (flights)              (hotels, activities)       (Airbnb / VRBO / Kayak cars)
-                 └───────────────────────┼───────────────────────┘
-                                  Claude synthesizes ─▶ streamed back to the UI
-```
+## Agents
 
-## Stack
+| Agent | Path | What it does |
+| --- | --- | --- |
+| 🧭 **Wayfarer** | [`travel-agent/`](travel-agent) | Full-stack agentic travel agent — Claude orchestrates flights, hotels, vacation rentals, cars, and activities in parallel via tool use, and streams a synthesized recommendation to a React UI. |
 
-- **Frontend** — React 18 + TypeScript + Vite, Tailwind CSS v3, TanStack Query
-  (server state), Zustand (UI + itinerary state), React Hook Form + Zod.
-- **Backend** — Node + Express + TypeScript, Anthropic SDK with tool use, SSE streaming.
-- **Search** — axios for API integrations (Kiwi Tequila, RapidAPI Booking/Viator);
-  Playwright + `playwright-extra` + stealth for Airbnb / VRBO / Kayak scraping.
+## Getting started
 
-## Project layout
-
-```
-ai-agents/
-├── shared/travel.ts          # canonical domain types (client + server re-export this)
-├── server/
-│   └── src/
-│       ├── index.ts          # Express app + CORS + /api/health
-│       ├── agent/
-│       │   ├── tools.ts      # Claude tool defs + Zod validation + executeToolCall dispatch
-│       │   ├── synthesizer.ts# the Wayfarer system prompt
-│       │   └── index.ts      # orchestrator (direct-search fan-out, re-exports)
-│       ├── routes/
-│       │   ├── chat.ts       # POST /api/chat — SSE, Claude→tools→Claude loop (max 3 iters)
-│       │   └── search.ts     # POST /api/search — direct, non-AI fan-out
-│       ├── api/              # flights.ts, hotels.ts, activities.ts (HTTP APIs)
-│       ├── scrapers/         # browser.ts, airbnb.ts, vrbo.ts, cars.ts (Playwright)
-│       └── lib/              # env.ts, coerce.ts (typed unknown narrowing), results.ts
-└── client/
-    └── src/
-        ├── App.tsx           # layout: chat (left) + collapsible itinerary (right)
-        ├── hooks/            # useChat (SSE reader), useItinerary (localStorage store)
-        ├── store/uiStore.ts  # tabs / panel UI state
-        ├── components/       # ChatInterface, MessageBubble, ResultsTabs, ItineraryPanel, cards/
-        └── lib/format.ts     # money/time formatting, itinerary export
-```
-
-## Setup
+Each agent is independent — `cd` into its folder and follow its README:
 
 ```bash
-npm run install:all        # installs root, client, and server deps
-npm run playwright:install # downloads the Chromium build for scraping
-cp .env.example .env        # then fill in your keys (see below)
-npm run dev                 # client → http://localhost:5173, server → http://localhost:3001
+cd travel-agent
+npm run install:all
+# … see travel-agent/README.md for the rest
 ```
 
-The Vite dev server proxies `/api/*` to the Express server, so you only open
-**http://localhost:5173**.
+## Adding a new agent
 
-### API keys
-
-Everything degrades gracefully — a missing key disables **only** that one source
-and the agent narrates the gap. You can run with just `ANTHROPIC_API_KEY` and the
-scrapers (no keys needed); add the rest as you go.
-
-| Source | Variable | Where to get it |
-| --- | --- | --- |
-| **Claude (required)** | `ANTHROPIC_API_KEY` | https://console.anthropic.com |
-| Flights | `KIWI_TEQUILA_API_KEY` | https://tequila.kiwi.com (free tier) |
-| Hotels + Activities | `RAPIDAPI_KEY` | https://rapidapi.com (subscribe to Booking.com + a Tours/Travel-Advisor API) |
-| Activities (alt) | `VIATOR_API_KEY` | https://api.viator.com/partner |
-| Airbnb / VRBO / Cars | _none_ | Playwright scrapers — just run `playwright:install` |
-
-`GET /api/health` reports which sources are configured.
-
-## Model note
-
-The agent uses **`claude-sonnet-4-6`** (set via `ANTHROPIC_MODEL`). The original
-brief pinned `claude-sonnet-4-20250514`, which is the older Sonnet 4 snapshot and
-is **deprecated (retires 2026-06-15)** — `claude-sonnet-4-6` is the current
-same-tier replacement (1M context, adaptive thinking). Swap to `claude-opus-4-8`
-in `.env` for stronger synthesis at higher cost.
-
-## Dev runner note
-
-The brief specified `ts-node --esm` for the server. This project uses **`tsx`**
-instead (`npm run dev` → `tsx watch`). `ts-node --esm` requires `.js` extensions
-on every relative import under NodeNext and is brittle across a multi-file ESM
-project; `tsx` runs the TypeScript ESM source directly with none of that
-friction. `npm run build` in `server/` is a `tsc --noEmit` typecheck (the server
-runs from source via `tsx`, so there is no separate compile step).
-
-## Debugging scrapers
-
-Scrapers are the brittle part of any travel tool — sites change layouts and fight
-bots. If a scraper returns **0 results**:
-
-1. Set `HEADLESS=false` in `.env` and re-run — you'll see the real browser and
-   can spot a CAPTCHA, login wall, or layout change.
-2. Each scraper tries an **XHR-intercept** strategy first (reading the site's own
-   JSON API responses), then falls back to **DOM scraping**. Both are best-effort
-   and matched structurally, so a site redesign degrades gracefully to an error
-   rather than crashing the whole search.
-
-### Known bot-detection issues per site
-
-- **Airbnb** — intercepts `StaysSearch` GraphQL responses; aggressive on
-  datacenter IPs. Residential IP + `HEADLESS=false` is most reliable.
-- **VRBO** — intercepts `propertyAvailabilitySearchResults`; occasionally serves
-  an interstitial. The DOM fallback targets `[data-stid="property-listing"]`.
-- **Kayak (cars)** — the most aggressive. Uses 3–5s delays and simulated mouse
-  movement; still expect frequent blocks. Treat car results as best-effort and
-  fall back to booking directly.
-
-## Quality standards
-
-- No `any` — third-party JSON is narrowed from `unknown` via `lib/coerce.ts`.
-- Every source runs under `Promise.allSettled` and every tool call is wrapped in
-  try/catch returning a structured error — one failing source never blocks the rest.
-- Scrapers run in **isolated browser contexts** (separate cookies/session); a
-  Playwright crash in one scraper can't affect the hotels API call.
-- Tool inputs are validated with **Zod** before execution.
-- React components stay small and focused (sub-components extracted aggressively).
-
-## How it works (request lifecycle)
-
-1. The UI POSTs the conversation + new message to `/api/chat` and reads the SSE stream.
-2. Claude receives the [Wayfarer system prompt](server/src/agent/synthesizer.ts)
-   and the six tool definitions, and decides which searches are relevant.
-3. On `tool_use`, the server executes **all** tool calls in parallel
-   (`Promise.allSettled`), streaming `searching` and `partial_results` events.
-4. Tool results go back to Claude, which synthesizes a final recommendation —
-   streamed to the UI as `token` events.
-5. The full `SearchResults` is attached to the assistant message; the UI renders
-   it in the tabs, and you save items (♡) into a localStorage-backed itinerary.
+Create a new top-level folder (e.g. `research-agent/`) with its own
+`package.json` and README. The root `.gitignore` already covers
+`node_modules/`, `dist/`, and `.env` at any depth, so each agent keeps its
+secrets out of version control automatically.
