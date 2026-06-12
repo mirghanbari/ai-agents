@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-slate-100 text-ink antialiased;
+  }
+}
+
+/* Markdown rendered inside agent bubbles. */
+.markdown > * + * {
+  @apply mt-2;
+}
+.markdown strong {
+  @apply font-semibold;
+}
+.markdown ul {
+  @apply list-disc space-y-1 pl-5;
+}
+.markdown ol {
+  @apply list-decimal space-y-1 pl-5;
+}
+.markdown a {
+  @apply text-wayfarer-600 underline;
+}
+.markdown code {
+  @apply rounded bg-slate-100 px-1 py-0.5 text-sm;
+}

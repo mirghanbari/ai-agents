@@ -1,0 +1,162 @@
+// Canonical domain types shared by client and server.
+// `server/src/types/travel.ts` and `client/src/types/travel.ts` re-export from here.
+
+// ── Search intent parsed by the AI agent ────────────────────────────────────
+
+export interface TripIntent {
+  origin?: string;
+  destination: string;
+  departDate: string; // YYYY-MM-DD
+  returnDate?: string;
+  adults: number;
+  children?: number;
+  budget?: {
+    flightMax?: number;
+    accommodationPerNight?: number;
+    carPerDay?: number;
+  };
+  accommodationType?: ('hotel' | 'airbnb' | 'vrbo')[];
+  needsCar?: boolean;
+  tripType?: 'leisure' | 'business' | 'adventure';
+  rawQuery: string;
+}
+
+// ── Result entities ─────────────────────────────────────────────────────────
+
+export interface Flight {
+  id: string;
+  airline: string;
+  flightNumber: string;
+  origin: string;
+  destination: string;
+  departTime: string;
+  arriveTime: string;
+  duration: string;
+  stops: number;
+  price: number;
+  currency: string;
+  bookingUrl: string;
+  cabin?: 'economy' | 'premium_economy' | 'business' | 'first';
+}
+
+export interface Hotel {
+  id: string;
+  name: string;
+  url: string;
+  thumbnailUrl: string;
+  address: string;
+  pricePerNight: number;
+  totalPrice?: number;
+  currency: string;
+  rating?: number;
+  reviewCount?: number;
+  stars?: number;
+  amenities?: string[];
+  coordinates?: { lat: number; lng: number };
+}
+
+export interface Listing {
+  id: string;
+  source: 'airbnb' | 'vrbo';
+  title: string;
+  url: string;
+  thumbnailUrl: string;
+  pricePerNight: number;
+  totalPrice?: number;
+  currency: string;
+  rating?: number;
+  reviewCount?: number;
+  bedrooms?: number;
+  beds?: number;
+  bathrooms?: number;
+  maxGuests?: number;
+  badges?: string[];
+  coordinates?: { lat: number; lng: number };
+}
+
+export interface RentalCar {
+  id: string;
+  supplier: string;
+  carName: string;
+  carCategory: string; // 'economy' | 'compact' | 'suv' | 'luxury' etc.
+  thumbnailUrl: string;
+  pricePerDay: number;
+  totalPrice?: number;
+  currency: string;
+  seats?: number;
+  transmission?: 'automatic' | 'manual';
+  features?: string[];
+  bookingUrl: string;
+}
+
+export interface Activity {
+  id: string;
+  title: string;
+  url: string;
+  thumbnailUrl: string;
+  duration?: string;
+  price: number;
+  currency: string;
+  rating?: number;
+  reviewCount?: number;
+  category?: string;
+  bookingUrl: string;
+}
+
+// ── Aggregated search results ───────────────────────────────────────────────
+
+export interface SearchResults {
+  flights?: Flight[];
+  hotels?: Hotel[];
+  listings?: Listing[];
+  cars?: RentalCar[];
+  activities?: Activity[];
+  searchedAt: string;
+  durationMs: number;
+  errors?: Record<string, string>; // per-source errors without failing the whole search
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  results?: SearchResults; // attached to assistant messages that triggered searches
+  timestamp: string;
+}
+
+// ── Itinerary builder ───────────────────────────────────────────────────────
+
+export type ItineraryItemType = 'flight' | 'hotel' | 'listing' | 'car' | 'activity';
+
+export interface ItineraryItem {
+  id: string;
+  type: ItineraryItemType;
+  data: Flight | Hotel | Listing | RentalCar | Activity;
+  savedAt: string;
+  notes?: string;
+}
+
+// ── Direct (non-AI) search params for POST /api/search ───────────────────────
+
+export type SearchSource =
+  | 'flights'
+  | 'hotels'
+  | 'airbnb'
+  | 'vrbo'
+  | 'cars'
+  | 'activities';
+
+export interface SearchParams {
+  sources: SearchSource[];
+  origin?: string;
+  destination: string;
+  departDate: string; // YYYY-MM-DD
+  returnDate?: string;
+  adults: number;
+  children?: number;
+  maxPricePerNight?: number;
+  minStars?: number;
+  carCategory?: 'economy' | 'compact' | 'midsize' | 'suv' | 'luxury' | 'any';
+  cabin?: 'economy' | 'premium_economy' | 'business' | 'first';
+  activityCategory?: string;
+}

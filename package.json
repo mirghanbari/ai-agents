@@ -1,0 +1,20 @@
+{
+  "name": "ai-travel-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentic AI travel agent — Claude orchestrates flights, stays, cars, and activities in parallel.",
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,magenta \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build:client": "cd client && npm run build",
+    "build:server": "cd server && npm run build",
+    "build": "npm run build:server && npm run build:client",
+    "install:all": "npm i && cd client && npm i && cd ../server && npm i",
+    "playwright:install": "cd server && npx playwright install chromium",
+    "lint": "concurrently \"cd server && npm run lint\" \"cd client && npm run lint\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
