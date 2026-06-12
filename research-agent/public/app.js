@@ -1,5 +1,6 @@
 // Front-end for the research agent. Opens an SSE stream and renders the report
-// as it's written, with live progress and a token/cost footer.
+// as it's written, with a live phase + elapsed-time status (so long thinking and
+// search phases never look frozen), a progress log, and a token/cost footer.
 
 const $ = (id) => document.getElementById(id);
 const form = $('form');
@@ -10,13 +11,26 @@ const footerEl = $('footer');
 const runBtn = $('run');
 
 let es = null;
+let timer = null;
+let startTime = 0;
+let currentPhase = '';
 
 marked.setOptions({ breaks: false });
-
-// Open links in a new tab.
 const renderer = new marked.Renderer();
 const origLink = renderer.link.bind(renderer);
 renderer.link = (...args) => origLink(...args).replace('<a ', '<a target="_blank" rel="noreferrer" ');
+
+// Deep-mode structural lines go to the log; short phase words drive the status line.
+const STRUCTURAL = /^(Planning|Researching|Synthesizing|\s+→|\s+✓)/;
+
+function elapsed() {
+  return ((Date.now() - startTime) / 1000).toFixed(0);
+}
+function paintStatus() {
+  if (!startTime) return;
+  statusEl.className = 'pulse';
+  statusEl.textContent = `${currentPhase || 'working'} · ${elapsed()}s`;
+}
 
 $('examples').addEventListener('click', (e) => {
   if (e.target.classList.contains('chip')) {
@@ -38,8 +52,10 @@ form.addEventListener('submit', (e) => {
   footerEl.innerHTML = '';
   progressEl.textContent = '';
   runBtn.disabled = true;
-  statusEl.className = 'pulse';
-  statusEl.textContent = 'Working';
+  startTime = Date.now();
+  currentPhase = 'starting';
+  paintStatus();
+  timer = setInterval(paintStatus, 1000);
 
   const params = new URLSearchParams({
     q,
@@ -52,20 +68,26 @@ form.addEventListener('submit', (e) => {
 
   es.addEventListener('progress', (ev) => {
     const { line } = JSON.parse(ev.data);
-    progressEl.textContent += (progressEl.textContent ? '\n' : '') + line;
+    if (STRUCTURAL.test(line)) {
+      progressEl.textContent += (progressEl.textContent ? '\n' : '') + line;
+    } else {
+      currentPhase = line; // 'searching the web', 'reading a source', 'thinking', …
+    }
+    paintStatus();
   });
 
   es.addEventListener('token', (ev) => {
     report += JSON.parse(ev.data).t;
+    currentPhase = 'writing the report';
     reportEl.className = 'show';
     reportEl.innerHTML = marked.parse(report, { renderer });
-    statusEl.textContent = 'Writing report';
   });
 
   es.addEventListener('done', (ev) => {
     const d = JSON.parse(ev.data);
+    finish();
     statusEl.className = '';
-    statusEl.textContent = '';
+    statusEl.textContent = '✓ done';
     const cost = (d.inputTokens * 5 + d.outputTokens * 25) / 1_000_000;
     const badges = [
       `${d.mode} · ${d.budget} · effort:${d.effort}`,
@@ -79,18 +101,20 @@ form.addEventListener('submit', (e) => {
       footerEl.innerHTML =
         '<span class="badge warn">⚠ hit token ceiling — raise budget for more</span>' + footerEl.innerHTML;
     }
-    finish();
   });
 
   es.addEventListener('error', (ev) => {
     let msg = 'Stream error';
     try { msg = JSON.parse(ev.data).message; } catch { /* connection-level error */ }
+    finish();
     statusEl.className = '';
     statusEl.textContent = '✖ ' + msg;
-    finish();
   });
 
   function finish() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    startTime = 0;
     runBtn.disabled = false;
     if (es) es.close();
     es = null;

@@ -22,32 +22,35 @@ export interface Budget {
 
 export type BudgetName = 'lite' | 'standard' | 'thorough';
 
+// Total tool calls per request ≈ searchUses + fetchUses. Keep that well under the
+// server's ~10-iteration loop limit so the model doesn't trigger pause_turn (whose
+// continuations re-send the whole context and are the main token-blowup vector).
 export const BUDGETS: Record<BudgetName, Budget> = {
   lite: {
-    searchUses: 3,
-    fetchUses: 3,
+    searchUses: 2,
+    fetchUses: 1,
     fetchContentTokens: 2500,
     maxTokens: 4000,
-    maxContinuations: 1,
-    tokenCeiling: 60_000,
+    maxContinuations: 0,
+    tokenCeiling: 45_000,
     maxSubtopics: 3,
   },
   standard: {
-    searchUses: 5,
-    fetchUses: 4,
-    fetchContentTokens: 4000,
-    maxTokens: 8000,
-    maxContinuations: 2,
-    tokenCeiling: 120_000,
+    searchUses: 3,
+    fetchUses: 2,
+    fetchContentTokens: 3500,
+    maxTokens: 6000,
+    maxContinuations: 1,
+    tokenCeiling: 80_000,
     maxSubtopics: 4,
   },
   thorough: {
-    searchUses: 8,
-    fetchUses: 6,
-    fetchContentTokens: 6000,
-    maxTokens: 16_000,
-    maxContinuations: 3,
-    tokenCeiling: 300_000,
+    searchUses: 5,
+    fetchUses: 4,
+    fetchContentTokens: 5000,
+    maxTokens: 12_000,
+    maxContinuations: 2,
+    tokenCeiling: 200_000,
     maxSubtopics: 5,
   },
 };

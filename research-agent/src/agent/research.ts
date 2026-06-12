@@ -76,6 +76,7 @@ async function runQuick(question: string, opts: ResearchOptions): Promise<Resear
     maxContinuations: b.maxContinuations,
     tokenCeiling: b.tokenCeiling,
     onText: opts.onText,
+    onPhase: opts.onProgress,
   });
   return {
     report: r.text,
@@ -125,6 +126,7 @@ async function runDeep(question: string, opts: ResearchOptions): Promise<Researc
     maxContinuations: 1,
     tokenCeiling: b.tokenCeiling,
     onText: opts.onText,
+    onPhase: opts.onProgress,
   });
 
   return {

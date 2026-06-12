@@ -23,5 +23,5 @@ export function bumpEffort(effort: Effort, steps = 1): Effort {
 export const env = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
   anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-opus-4-8',
-  effort: parseEffort(process.env.RESEARCH_EFFORT, 'high'),
+  effort: parseEffort(process.env.RESEARCH_EFFORT, 'medium'),
 } as const;

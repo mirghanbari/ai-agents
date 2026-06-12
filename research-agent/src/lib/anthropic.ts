@@ -24,6 +24,24 @@ export interface TurnOptions {
   tokenCeiling?: number;
   /** Stream text deltas as they arrive (for the report-writing turns). */
   onText?: (delta: string) => void;
+  /** Live phase updates: 'searching the web', 'reading a source', 'thinking', 'writing'. */
+  onPhase?: (phase: string) => void;
+}
+
+/** Map a starting content block to a human phase label. */
+function phaseOf(block: Anthropic.ContentBlock): string | null {
+  switch (block.type) {
+    case 'thinking':
+      return 'thinking';
+    case 'text':
+      return 'writing the report';
+    case 'server_tool_use':
+      if (block.name === 'web_search') return 'searching the web';
+      if (block.name === 'web_fetch') return 'reading a source';
+      return 'using a tool';
+    default:
+      return null;
+  }
 }
 
 /**
@@ -52,6 +70,14 @@ export async function runTurn(opts: TurnOptions): Promise<TurnResult> {
     });
 
     if (opts.onText) stream.on('text', (delta) => opts.onText?.(delta));
+    if (opts.onPhase) {
+      stream.on('streamEvent', (event) => {
+        if (event.type === 'content_block_start') {
+          const phase = phaseOf(event.content_block);
+          if (phase) opts.onPhase?.(phase);
+        }
+      });
+    }
 
     const message = await stream.finalMessage();
     for (const block of message.content) {
