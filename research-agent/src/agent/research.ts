@@ -1,0 +1,117 @@
+import { z } from 'zod';
+import { anthropic, runTurn, type TurnResult } from '../lib/anthropic';
+import { env, type Effort } from '../lib/env';
+import { webTools } from './tools';
+import {
+  ANALYST_SYSTEM,
+  PLANNER_SYSTEM,
+  RESEARCHER_SYSTEM,
+  SYNTHESIZER_SYSTEM,
+} from './prompts';
+
+export interface ResearchOptions {
+  mode: 'quick' | 'deep';
+  effort: Effort;
+  /** Streams the final report text as it's written. */
+  onText?: (delta: string) => void;
+  /** Status lines (planning, per-subtopic progress) — for stderr, not the report. */
+  onProgress?: (line: string) => void;
+}
+
+export interface ResearchResult {
+  report: string;
+  inputTokens: number;
+  outputTokens: number;
+  subtopics?: string[];
+}
+
+// ── Planner (deep mode): decompose into independent subtopics ─────────────────
+
+const PlanSchema = z.object({ subtopics: z.array(z.string().min(1)).min(1).max(6) });
+
+async function planSubtopics(question: string): Promise<string[]> {
+  const message = await anthropic.messages.create({
+    model: env.anthropicModel,
+    max_tokens: 4000,
+    system: PLANNER_SYSTEM,
+    thinking: { type: 'adaptive' },
+    output_config: {
+      effort: 'medium',
+      format: {
+        type: 'json_schema',
+        schema: {
+          type: 'object',
+          properties: { subtopics: { type: 'array', items: { type: 'string' } } },
+          required: ['subtopics'],
+          additionalProperties: false,
+        },
+      },
+    },
+    messages: [{ role: 'user', content: question }],
+  });
+
+  const textBlock = message.content.find((b) => b.type === 'text');
+  if (textBlock?.type !== 'text') return [question];
+  try {
+    return PlanSchema.parse(JSON.parse(textBlock.text)).subtopics;
+  } catch {
+    return [question]; // degrade gracefully to a single thread
+  }
+}
+
+// ── Quick mode: one agent, multi-search single pass ──────────────────────────
+
+async function runQuick(question: string, opts: ResearchOptions): Promise<ResearchResult> {
+  const r = await runTurn({
+    system: ANALYST_SYSTEM,
+    input: question,
+    effort: opts.effort,
+    tools: webTools(8),
+    maxTokens: 16_000,
+    onText: opts.onText,
+  });
+  return { report: r.text, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
+}
+
+// ── Deep mode: plan → parallel sub-agents → lead synthesis ───────────────────
+
+async function runDeep(question: string, opts: ResearchOptions): Promise<ResearchResult> {
+  opts.onProgress?.('Planning subtopics…');
+  const subtopics = await planSubtopics(question);
+  opts.onProgress?.(`Researching ${subtopics.length} subtopics in parallel:`);
+
+  const memos = await Promise.all(
+    subtopics.map(async (subtopic): Promise<{ subtopic: string } & TurnResult> => {
+      opts.onProgress?.(`  → ${subtopic}`);
+      const r = await runTurn({
+        system: RESEARCHER_SYSTEM,
+        input: `Subtopic to research: ${subtopic}\n\nThis is part of the larger question: "${question}"`,
+        effort: opts.effort,
+        tools: webTools(5),
+        maxTokens: 12_000,
+      });
+      opts.onProgress?.(`  ✓ ${subtopic}`);
+      return { subtopic, ...r };
+    }),
+  );
+
+  opts.onProgress?.('Synthesizing final report…');
+  const memoBlock = memos
+    .map((m, i) => `### Memo ${i + 1}: ${m.subtopic}\n\n${m.text}`)
+    .join('\n\n---\n\n');
+  const synthesis = await runTurn({
+    system: SYNTHESIZER_SYSTEM,
+    input: `Original question: ${question}\n\nSub-agent findings memos:\n\n${memoBlock}`,
+    effort: opts.effort,
+    maxTokens: 32_000,
+    onText: opts.onText,
+  });
+
+  const inputTokens = synthesis.inputTokens + memos.reduce((s, m) => s + m.inputTokens, 0);
+  const outputTokens = synthesis.outputTokens + memos.reduce((s, m) => s + m.outputTokens, 0);
+  return { report: synthesis.text, inputTokens, outputTokens, subtopics };
+}
+
+export function research(question: string, opts: ResearchOptions): Promise<ResearchResult> {
+  return opts.mode === 'deep' ? runDeep(question, opts) : runQuick(question, opts);
+}

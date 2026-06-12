@@ -1,0 +1,26 @@
+{
+  "name": "research-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous research analyst — Claude researches a question with web search and returns a cited report.",
+  "scripts": {
+    "research": "tsx src/cli.ts",
+    "start": "tsx src/cli.ts",
+    "build": "tsc --noEmit",
+    "lint": "eslint . --ext .ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@typescript-eslint/eslint-plugin": "^8.19.1",
+    "@typescript-eslint/parser": "^8.19.1",
+    "eslint": "^8.57.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
