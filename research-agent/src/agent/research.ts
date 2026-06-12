@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { anthropic, runTurn, type TurnResult } from '../lib/anthropic';
 import { env, type Effort } from '../lib/env';
-import { webTools } from './tools';
+import { lighter, type Budget } from '../lib/budget';
+import { webTools, type DomainLimits } from './tools';
 import {
   ANALYST_SYSTEM,
   PLANNER_SYSTEM,
@@ -12,9 +13,11 @@ import {
 export interface ResearchOptions {
   mode: 'quick' | 'deep';
   effort: Effort;
+  budget: Budget;
+  domains?: DomainLimits;
   /** Streams the final report text as it's written. */
   onText?: (delta: string) => void;
-  /** Status lines (planning, per-subtopic progress) — for stderr, not the report. */
+  /** Status lines (planning, per-subtopic progress) — for stderr / UI log. */
   onProgress?: (line: string) => void;
 }
 
@@ -22,6 +25,7 @@ export interface ResearchResult {
   report: string;
   inputTokens: number;
   outputTokens: number;
+  truncated: boolean;
   subtopics?: string[];
 }
 
@@ -62,22 +66,34 @@ async function planSubtopics(question: string): Promise<string[]> {
 // ── Quick mode: one agent, multi-search single pass ──────────────────────────
 
 async function runQuick(question: string, opts: ResearchOptions): Promise<ResearchResult> {
+  const b = opts.budget;
   const r = await runTurn({
     system: ANALYST_SYSTEM,
     input: question,
     effort: opts.effort,
-    tools: webTools(8),
-    maxTokens: 16_000,
+    tools: webTools(b, opts.domains),
+    maxTokens: b.maxTokens,
+    maxContinuations: b.maxContinuations,
+    tokenCeiling: b.tokenCeiling,
     onText: opts.onText,
   });
-  return { report: r.text, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
+  return {
+    report: r.text,
+    inputTokens: r.inputTokens,
+    outputTokens: r.outputTokens,
+    truncated: r.truncated,
+  };
 }
 
-// ── Deep mode: plan → parallel sub-agents → lead synthesis ───────────────────
+// ── Deep mode: plan → parallel (lighter) sub-agents → lead synthesis ─────────
 
 async function runDeep(question: string, opts: ResearchOptions): Promise<ResearchResult> {
+  const b = opts.budget;
+  const subB = lighter(b);
+
   opts.onProgress?.('Planning subtopics…');
-  const subtopics = await planSubtopics(question);
+  const planned = await planSubtopics(question);
+  const subtopics = planned.slice(0, b.maxSubtopics);
   opts.onProgress?.(`Researching ${subtopics.length} subtopics in parallel:`);
 
   const memos = await Promise.all(
@@ -87,10 +103,12 @@ async function runDeep(question: string, opts: ResearchOptions): Promise<Researc
         system: RESEARCHER_SYSTEM,
         input: `Subtopic to research: ${subtopic}\n\nThis is part of the larger question: "${question}"`,
         effort: opts.effort,
-        tools: webTools(5),
-        maxTokens: 12_000,
+        tools: webTools(subB, opts.domains),
+        maxTokens: subB.maxTokens,
+        maxContinuations: subB.maxContinuations,
+        tokenCeiling: subB.tokenCeiling,
       });
-      opts.onProgress?.(`  ✓ ${subtopic}`);
+      opts.onProgress?.(`  ✓ ${subtopic}${r.truncated ? ' (hit cap)' : ''}`);
       return { subtopic, ...r };
     }),
   );
@@ -103,13 +121,19 @@ async function runDeep(question: string, opts: ResearchOptions): Promise<Researc
     system: SYNTHESIZER_SYSTEM,
     input: `Original question: ${question}\n\nSub-agent findings memos:\n\n${memoBlock}`,
     effort: opts.effort,
-    maxTokens: 32_000,
+    maxTokens: Math.min(b.maxTokens * 2, 24_000),
+    maxContinuations: 1,
+    tokenCeiling: b.tokenCeiling,
     onText: opts.onText,
   });
 
-  const inputTokens = synthesis.inputTokens + memos.reduce((s, m) => s + m.inputTokens, 0);
-  const outputTokens = synthesis.outputTokens + memos.reduce((s, m) => s + m.outputTokens, 0);
-  return { report: synthesis.text, inputTokens, outputTokens, subtopics };
+  return {
+    report: synthesis.text,
+    inputTokens: synthesis.inputTokens + memos.reduce((s, m) => s + m.inputTokens, 0),
+    outputTokens: synthesis.outputTokens + memos.reduce((s, m) => s + m.outputTokens, 0),
+    truncated: synthesis.truncated || memos.some((m) => m.truncated),
+    subtopics,
+  };
 }
 
 export function research(question: string, opts: ResearchOptions): Promise<ResearchResult> {

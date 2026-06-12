@@ -7,6 +7,8 @@ export interface TurnResult {
   text: string;
   inputTokens: number;
   outputTokens: number;
+  /** True if the run was stopped by the token ceiling before finishing. */
+  truncated: boolean;
 }
 
 export interface TurnOptions {
@@ -18,6 +20,8 @@ export interface TurnOptions {
   maxTokens?: number;
   /** Server-side tools loop server-side; if it pauses, we re-send up to this many times. */
   maxContinuations?: number;
+  /** Hard stop: abort further continuations once cumulative in+out tokens exceed this. */
+  tokenCeiling?: number;
   /** Stream text deltas as they arrive (for the report-writing turns). */
   onText?: (delta: string) => void;
 }
@@ -32,7 +36,9 @@ export async function runTurn(opts: TurnOptions): Promise<TurnResult> {
   let text = '';
   let inputTokens = 0;
   let outputTokens = 0;
+  let truncated = false;
   const maxContinuations = opts.maxContinuations ?? 4;
+  const ceiling = opts.tokenCeiling ?? Infinity;
 
   for (let i = 0; i <= maxContinuations; i++) {
     const stream = anthropic.messages.stream({
@@ -55,12 +61,17 @@ export async function runTurn(opts: TurnOptions): Promise<TurnResult> {
     outputTokens += message.usage.output_tokens;
 
     if (message.stop_reason === 'pause_turn') {
-      // Server tool loop hit its limit mid-task — re-send to resume.
+      // Server tool loop hit its limit mid-task. Stop here if we've blown the
+      // token ceiling, otherwise re-send to resume.
+      if (inputTokens + outputTokens >= ceiling) {
+        truncated = true;
+        break;
+      }
       messages.push({ role: 'assistant', content: message.content });
       continue;
     }
     break;
   }
 
-  return { text, inputTokens, outputTokens };
+  return { text, inputTokens, outputTokens, truncated };
 }

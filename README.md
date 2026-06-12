@@ -8,7 +8,7 @@ subdirectory with its own dependencies, environment, and README.
 | Agent | Path | What it does |
 | --- | --- | --- |
 | 🧭 **Wayfarer** | [`travel-agent/`](travel-agent) | Full-stack agentic travel agent — Claude orchestrates flights, hotels, vacation rentals, cars, and activities in parallel via tool use, and streams a synthesized recommendation to a React UI. |
-| 🔬 **Research Agent** | [`research-agent/`](research-agent) | Autonomous research analyst — Claude investigates a question with live web search and returns a cited report (CLI). Has a `--deep` mode that fans out to parallel sub-agents. Needs only an Anthropic key. |
+| 🔬 **Research Agent** | [`research-agent/`](research-agent) | Autonomous research analyst — Claude investigates a question with live web search and returns a cited report, via **CLI or a streaming web UI**. Has a `--deep` mode (parallel sub-agents) and tunable cost budgets. Needs only an Anthropic key. |
 
 ## Getting started
 
