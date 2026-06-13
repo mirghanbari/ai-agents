@@ -6,7 +6,7 @@ const router = express.Router();
 
 const SearchRequestSchema = z.object({
   sources: z
-    .array(z.enum(['flights', 'hotels', 'airbnb', 'vrbo', 'cars', 'activities']))
+    .array(z.enum(['flights', 'hotels', 'airbnb', 'vrbo', 'cars', 'activities', 'events']))
     .min(1),
   origin: z.string().optional(),
   destination: z.string().min(1),
@@ -19,6 +19,9 @@ const SearchRequestSchema = z.object({
   carCategory: z.enum(['economy', 'compact', 'midsize', 'suv', 'luxury', 'any']).optional(),
   cabin: z.enum(['economy', 'premium_economy', 'business', 'first']).optional(),
   activityCategory: z.string().optional(),
+  eventQuery: z.string().optional(),
+  ticketQuantity: z.number().int().positive().optional(),
+  maxTicketPrice: z.number().positive().optional(),
 });
 
 // POST /api/search — direct, non-AI fan-out. Useful for re-searching from the UI.

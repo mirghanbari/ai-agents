@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   Activity,
+  EventTicket,
   Flight,
   Hotel,
   ItineraryItem,
@@ -11,7 +12,7 @@ import type {
 
 const STORAGE_KEY = 'wayfarer.itinerary.v1';
 
-type SavableData = Flight | Hotel | Listing | RentalCar | Activity;
+type SavableData = Flight | Hotel | Listing | RentalCar | Activity | EventTicket;
 
 function load(): ItineraryItem[] {
   try {

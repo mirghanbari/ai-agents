@@ -5,6 +5,7 @@ import HotelCard from './cards/HotelCard';
 import ListingCard from './cards/ListingCard';
 import CarCard from './cards/CarCard';
 import ActivityCard from './cards/ActivityCard';
+import EventCard from './cards/EventCard';
 import type { SearchResults } from '../types/travel';
 
 type SortKey = 'price-asc' | 'price-desc' | 'rating-desc';
@@ -15,11 +16,13 @@ const TAB_META: { key: ResultsTab; label: string }[] = [
   { key: 'listings', label: '🏠 Stays' },
   { key: 'cars', label: '🚗 Cars' },
   { key: 'activities', label: '🎯 Activities' },
+  { key: 'events', label: '🎟️ Tickets' },
 ];
 
 function priceOf(tab: ResultsTab, item: unknown): number {
   const o = item as Record<string, number>;
   if (tab === 'flights' || tab === 'activities') return o.price ?? 0;
+  if (tab === 'events') return o.lowestPrice ?? 0;
   if (tab === 'cars') return o.pricePerDay ?? 0;
   return o.pricePerNight ?? 0;
 }
@@ -117,5 +120,7 @@ function ResultCard({ tab, item }: { tab: ResultsTab; item: unknown }) {
       return <CarCard car={item as never} />;
     case 'activities':
       return <ActivityCard activity={item as never} />;
+    case 'events':
+      return <EventCard event={item as never} />;
   }
 }

@@ -11,5 +11,6 @@ export function mergeResults(acc: SearchResults, incoming: Partial<SearchResults
   if (incoming.listings) acc.listings = [...(acc.listings ?? []), ...incoming.listings];
   if (incoming.cars) acc.cars = [...(acc.cars ?? []), ...incoming.cars];
   if (incoming.activities) acc.activities = [...(acc.activities ?? []), ...incoming.activities];
+  if (incoming.events) acc.events = [...(acc.events ?? []), ...incoming.events];
   if (incoming.errors) acc.errors = { ...(acc.errors ?? {}), ...incoming.errors };
 }

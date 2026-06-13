@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type ResultsTab = 'flights' | 'hotels' | 'listings' | 'cars' | 'activities';
+export type ResultsTab = 'flights' | 'hotels' | 'listings' | 'cars' | 'activities' | 'events';
 
 interface UiState {
   // Which assistant message's results are currently expanded in the results panel.

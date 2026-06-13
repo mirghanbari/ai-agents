@@ -1,6 +1,7 @@
 import { useItinerary } from '../hooks/useItinerary';
 import type {
   Activity,
+  EventTicket,
   Flight,
   Hotel,
   ItineraryItemType,
@@ -10,7 +11,7 @@ import type {
 
 interface SaveButtonProps {
   type: ItineraryItemType;
-  data: Flight | Hotel | Listing | RentalCar | Activity;
+  data: Flight | Hotel | Listing | RentalCar | Activity | EventTicket;
 }
 
 /** Heart toggle that saves/removes an item from the itinerary. */

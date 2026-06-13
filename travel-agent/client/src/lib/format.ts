@@ -1,5 +1,6 @@
 import type {
   Activity,
+  EventTicket,
   Flight,
   Hotel,
   ItineraryItem,
@@ -51,6 +52,10 @@ export function itemCost(item: ItineraryItem): { amount: number; currency: strin
     }
     case 'activity':
       return { amount: (d as Activity).price, currency: d.currency };
+    case 'event': {
+      const e = d as EventTicket;
+      return { amount: e.lowestPrice ?? 0, currency: e.currency };
+    }
   }
 }
 
@@ -71,6 +76,8 @@ export function itemTitle(item: ItineraryItem): string {
     }
     case 'activity':
       return (d as Activity).title;
+    case 'event':
+      return (d as EventTicket).title;
   }
 }
 
@@ -80,13 +87,14 @@ const TYPE_LABEL: Record<ItineraryItem['type'], string> = {
   listing: '🏠 Stay',
   car: '🚗 Car',
   activity: '🎯 Activity',
+  event: '🎟️ Tickets',
 };
 
 export function typeLabel(type: ItineraryItem['type']): string {
   return TYPE_LABEL[type];
 }
 
-const ORDER: ItineraryItem['type'][] = ['flight', 'hotel', 'listing', 'car', 'activity'];
+const ORDER: ItineraryItem['type'][] = ['flight', 'hotel', 'listing', 'car', 'activity', 'event'];
 
 export function exportItineraryMarkdown(items: ItineraryItem[]): string {
   if (items.length === 0) return '_Your itinerary is empty._';

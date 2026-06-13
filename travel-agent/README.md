@@ -2,16 +2,17 @@
 
 An agentic, full-stack AI travel agent. A Claude backend (the **Wayfarer**
 persona) parses your request, fans out searches across flights, hotels, vacation
-rentals, rental cars, and activities **in parallel**, then synthesizes the
-results into a curated recommendation — streamed token-by-token to a React UI.
+rentals, rental cars, activities, and event tickets **in parallel**, then
+synthesizes the results into a curated recommendation — streamed token-by-token
+to a React UI.
 
 ```
 You ───▶ Express /api/chat (SSE) ───▶ Claude (tool use)
                                          │  parallel tool calls
-                 ┌───────────────────────┼───────────────────────┐
-              Kiwi API            Booking/Viator (RapidAPI)   Playwright + stealth
-            (flights)              (hotels, activities)       (Airbnb / VRBO / Kayak cars)
-                 └───────────────────────┼───────────────────────┘
+                 ┌──────────────────┬────┼─────────────────┬──────────────────┐
+              Kiwi API     Booking/Viator (RapidAPI)  SeatGeek API     Playwright + stealth
+            (flights)      (hotels, activities)       (event tickets)  (Airbnb / VRBO / Kayak / StubHub)
+                 └──────────────────┴────┼─────────────────┴──────────────────┘
                                   Claude synthesizes ─▶ streamed back to the UI
 ```
 
@@ -20,8 +21,9 @@ You ───▶ Express /api/chat (SSE) ───▶ Claude (tool use)
 - **Frontend** — React 18 + TypeScript + Vite, Tailwind CSS v3, TanStack Query
   (server state), Zustand (UI + itinerary state), React Hook Form + Zod.
 - **Backend** — Node + Express + TypeScript, Anthropic SDK with tool use, SSE streaming.
-- **Search** — axios for API integrations (Kiwi Tequila, RapidAPI Booking/Viator);
-  Playwright + `playwright-extra` + stealth for Airbnb / VRBO / Kayak scraping.
+- **Search** — axios for API integrations (Kiwi Tequila, RapidAPI Booking/Viator,
+  SeatGeek/StubHub tickets); Playwright + `playwright-extra` + stealth for
+  Airbnb / VRBO / Kayak / StubHub scraping.
 
 ## Project layout
 
@@ -29,6 +31,7 @@ You ───▶ Express /api/chat (SSE) ───▶ Claude (tool use)
 ai-agents/
 ├── shared/travel.ts          # canonical domain types (client + server re-export this)
 ├── server/
+│   ├── scripts/             # manual smoke tests (smoke-events.ts, smoke-stubhub.ts)
 │   └── src/
 │       ├── index.ts          # Express app + CORS + /api/health
 │       ├── agent/
@@ -38,8 +41,8 @@ ai-agents/
 │       ├── routes/
 │       │   ├── chat.ts       # POST /api/chat — SSE, Claude→tools→Claude loop (max 3 iters)
 │       │   └── search.ts     # POST /api/search — direct, non-AI fan-out
-│       ├── api/              # flights.ts, hotels.ts, activities.ts (HTTP APIs)
-│       ├── scrapers/         # browser.ts, airbnb.ts, vrbo.ts, cars.ts (Playwright)
+│       ├── api/              # flights.ts, hotels.ts, activities.ts, events.ts (HTTP APIs)
+│       ├── scrapers/         # browser.ts, airbnb.ts, vrbo.ts, cars.ts, stubhub.ts (Playwright)
 │       └── lib/              # env.ts, coerce.ts (typed unknown narrowing), results.ts
 └── client/
     └── src/
@@ -74,7 +77,9 @@ scrapers (no keys needed); add the rest as you go.
 | Flights | `KIWI_TEQUILA_API_KEY` | https://tequila.kiwi.com (free tier) |
 | Hotels + Activities | `RAPIDAPI_KEY` | https://rapidapi.com (subscribe to Booking.com + a Tours/Travel-Advisor API) |
 | Activities (alt) | `VIATOR_API_KEY` | https://api.viator.com/partner |
-| Airbnb / VRBO / Cars | _none_ | Playwright scrapers — just run `playwright:install` |
+| Event tickets | `SEATGEEK_CLIENT_ID` | https://seatgeek.com/account/develop (free) |
+| Event tickets (alt) | `STUBHUB_CLIENT_ID` / `STUBHUB_CLIENT_SECRET` | https://developer.stubhub.com (partner program) |
+| Airbnb / VRBO / Cars / StubHub | _none_ | Playwright scrapers — just run `playwright:install` |
 
 `GET /api/health` reports which sources are configured.
 
@@ -116,6 +121,10 @@ bots. If a scraper returns **0 results**:
 - **Kayak (cars)** — the most aggressive. Uses 3–5s delays and simulated mouse
   movement; still expect frequent blocks. Treat car results as best-effort and
   fall back to booking directly.
+- **StubHub (tickets)** — only used as a fallback when no StubHub partner keys are
+  set. The results list is virtualized behind bot defense, so the scraper
+  step-scrolls and harvests cards before they unmount; most reliable on a
+  residential IP with `HEADLESS=false`. SeatGeek (API) is unaffected.
 
 ## Quality standards
 
@@ -126,12 +135,17 @@ bots. If a scraper returns **0 results**:
   Playwright crash in one scraper can't affect the hotels API call.
 - Tool inputs are validated with **Zod** before execution.
 - React components stay small and focused (sub-components extracted aggressively).
+- **Unit tests (Vitest)** cover the pure, deterministic core — the `unknown`→typed
+  coercers (`lib/coerce.ts`), the SeatGeek/StubHub response mappers + ticket
+  filters (`api/events.ts`), and the StubHub card/date parsing (`scrapers/stubhub.ts`).
+  Run `npm test` in `server/` (or `npm test` at the root). Network/scraper layers
+  stay covered by the manual smoke scripts in `server/scripts/`.
 
 ## How it works (request lifecycle)
 
 1. The UI POSTs the conversation + new message to `/api/chat` and reads the SSE stream.
 2. Claude receives the [Wayfarer system prompt](server/src/agent/synthesizer.ts)
-   and the six tool definitions, and decides which searches are relevant.
+   and the seven tool definitions, and decides which searches are relevant.
 3. On `tool_use`, the server executes **all** tool calls in parallel
    (`Promise.allSettled`), streaming `searching` and `partial_results` events.
 4. Tool results go back to Claude, which synthesizes a final recommendation —
