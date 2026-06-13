@@ -86,6 +86,18 @@ function toToolCall(
           adults: p.adults,
         },
       };
+    case 'events':
+      return {
+        name: 'search_event_tickets',
+        input: {
+          query: p.eventQuery ?? p.destination,
+          city: p.destination,
+          dateFrom: p.departDate,
+          dateTo: p.returnDate,
+          quantity: p.ticketQuantity ?? p.adults,
+          maxPrice: p.maxTicketPrice,
+        },
+      };
   }
 }
 

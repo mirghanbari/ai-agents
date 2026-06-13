@@ -10,6 +10,7 @@
     "build:client": "cd client && npm run build",
     "build:server": "cd server && npm run build",
     "build": "npm run build:server && npm run build:client",
+    "test": "cd server && npm test",
     "install:all": "npm i && cd client && npm i && cd ../server && npm i",
     "playwright:install": "cd server && npx playwright install chromium",
     "lint": "concurrently \"cd server && npm run lint\" \"cd client && npm run lint\""

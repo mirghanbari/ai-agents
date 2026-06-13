@@ -20,6 +20,13 @@ export const env = {
 
   viatorApiKey: process.env.VIATOR_API_KEY ?? '',
 
+  // Event tickets — SeatGeek needs only a client id (free); StubHub needs a
+  // partner client id + secret (OAuth client-credentials).
+  seatGeekClientId: process.env.SEATGEEK_CLIENT_ID ?? '',
+  seatGeekClientSecret: process.env.SEATGEEK_CLIENT_SECRET ?? '',
+  stubHubClientId: process.env.STUBHUB_CLIENT_ID ?? '',
+  stubHubClientSecret: process.env.STUBHUB_CLIENT_SECRET ?? '',
+
   headless: (process.env.HEADLESS ?? 'true').toLowerCase() !== 'false',
   scraperIdleTimeoutMs: Number(process.env.SCRAPER_IDLE_TIMEOUT_MS ?? 120_000),
 

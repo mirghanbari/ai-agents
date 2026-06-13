@@ -4,6 +4,7 @@ import { SourceError } from '../lib/env';
 import { searchFlights } from '../api/flights';
 import { searchHotels } from '../api/hotels';
 import { searchActivities } from '../api/activities';
+import { searchEventTickets } from '../api/events';
 import { searchAirbnb } from '../scrapers/airbnb';
 import { searchVrbo } from '../scrapers/vrbo';
 import { searchRentalCars } from '../scrapers/cars';
@@ -114,6 +115,29 @@ export const toolDefinitions: Anthropic.Tool[] = [
       required: ['destination'],
     },
   },
+  {
+    name: 'search_event_tickets',
+    description:
+      'Search live event tickets (sports games, concerts, theater) across SeatGeek and StubHub. ' +
+      'Use when the user wants tickets to a specific match, game, team, artist, or show — ' +
+      'e.g. "World Cup tickets", "Lakers vs Celtics", "Taylor Swift in Toronto". ' +
+      'Returns events with per-ticket price ranges and how many listings are available.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Team, match, artist, or event, e.g. "USA World Cup" or "Lakers vs Celtics"',
+        },
+        city: { type: 'string', description: 'City to narrow the search (optional)' },
+        dateFrom: { type: 'string', description: 'Earliest event date YYYY-MM-DD (optional)' },
+        dateTo: { type: 'string', description: 'Latest event date YYYY-MM-DD (optional)' },
+        quantity: { type: 'number', description: 'Number of tickets needed (filters for enough availability)' },
+        maxPrice: { type: 'number', description: 'Maximum price per ticket' },
+      },
+      required: ['query'],
+    },
+  },
 ];
 
 // ── Zod schemas (validated before execution) ─────────────────────────────────
@@ -160,6 +184,15 @@ const activitiesSchema = z.object({
   maxPricePerPerson: z.number().positive().optional(),
 });
 
+const eventsSchema = z.object({
+  query: z.string().min(1),
+  city: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+  quantity: z.number().int().positive().optional(),
+  maxPrice: z.number().positive().optional(),
+});
+
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 /** Map each tool to the SearchResults.errors key it reports under. */
@@ -170,6 +203,7 @@ const ERROR_KEY: Record<string, string> = {
   search_vrbo: 'vrbo',
   search_rental_cars: 'cars',
   search_activities: 'activities',
+  search_event_tickets: 'events',
 };
 
 /**
@@ -207,6 +241,10 @@ export async function executeToolCall(
       case 'search_activities': {
         const p = activitiesSchema.parse(input);
         return { activities: await searchActivities(p) };
+      }
+      case 'search_event_tickets': {
+        const p = eventsSchema.parse(input);
+        return { events: await searchEventTickets(p) };
       }
       default:
         return { errors: { [errorKey]: `Unknown tool "${name}".` } };

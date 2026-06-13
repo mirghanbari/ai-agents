@@ -103,6 +103,24 @@ export interface Activity {
   bookingUrl: string;
 }
 
+export interface EventTicket {
+  id: string;
+  source: 'seatgeek' | 'stubhub';
+  title: string; // e.g. "USA vs. Wales — FIFA World Cup"
+  venue: string;
+  city?: string;
+  datetime: string; // ISO local datetime of the event
+  url: string; // deep link to buy
+  lowestPrice?: number; // per-ticket "get-in" price
+  highestPrice?: number;
+  averagePrice?: number;
+  currency: string;
+  listingCount?: number; // tickets/listings currently available
+  performers?: string[]; // teams / artists
+  category?: string; // 'sports' | 'concert' | 'theater' etc.
+  thumbnailUrl: string;
+}
+
 // ── Aggregated search results ───────────────────────────────────────────────
 
 export interface SearchResults {
@@ -111,6 +129,7 @@ export interface SearchResults {
   listings?: Listing[];
   cars?: RentalCar[];
   activities?: Activity[];
+  events?: EventTicket[];
   searchedAt: string;
   durationMs: number;
   errors?: Record<string, string>; // per-source errors without failing the whole search
@@ -126,12 +145,12 @@ export interface ChatMessage {
 
 // ── Itinerary builder ───────────────────────────────────────────────────────
 
-export type ItineraryItemType = 'flight' | 'hotel' | 'listing' | 'car' | 'activity';
+export type ItineraryItemType = 'flight' | 'hotel' | 'listing' | 'car' | 'activity' | 'event';
 
 export interface ItineraryItem {
   id: string;
   type: ItineraryItemType;
-  data: Flight | Hotel | Listing | RentalCar | Activity;
+  data: Flight | Hotel | Listing | RentalCar | Activity | EventTicket;
   savedAt: string;
   notes?: string;
 }
@@ -144,7 +163,8 @@ export type SearchSource =
   | 'airbnb'
   | 'vrbo'
   | 'cars'
-  | 'activities';
+  | 'activities'
+  | 'events';
 
 export interface SearchParams {
   sources: SearchSource[];
@@ -159,4 +179,8 @@ export interface SearchParams {
   carCategory?: 'economy' | 'compact' | 'midsize' | 'suv' | 'luxury' | 'any';
   cabin?: 'economy' | 'premium_economy' | 'business' | 'first';
   activityCategory?: string;
+  // Event tickets
+  eventQuery?: string; // team / match / artist, e.g. "USA World Cup"
+  ticketQuantity?: number;
+  maxTicketPrice?: number; // per ticket
 }

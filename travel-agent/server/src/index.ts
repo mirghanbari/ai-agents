@@ -19,6 +19,9 @@ app.get('/api/health', (_req, res) => {
       flights: Boolean(env.kiwiTequilaApiKey),
       hotels: Boolean(env.rapidApiKey),
       activities: Boolean(env.rapidApiKey || env.viatorApiKey),
+      // Always available: falls back to the keyless StubHub scraper when no
+      // ticket API keys are set. SeatGeek/StubHub keys only add API-backed results.
+      events: true,
       scrapers: true,
     },
   });

@@ -33,7 +33,7 @@ export function pickNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
     // Strip currency symbols / thousands separators before parsing.
-    const cleaned = value.replace(/[^0-9.\-]/g, '');
+    const cleaned = value.replace(/[^0-9.-]/g, '');
     if (cleaned === '' || cleaned === '-') return undefined;
     const n = Number(cleaned);
     return Number.isFinite(n) ? n : undefined;
