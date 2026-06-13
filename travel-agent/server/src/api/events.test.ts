@@ -136,6 +136,14 @@ describe('applyFilters', () => {
     expect(out.map((e) => e.id)).toEqual(['a']);
   });
 
+  it('caps the result set at 20 (keeping the cheapest), like every other source', () => {
+    const many = Array.from({ length: 30 }, (_, i) => ev({ id: `e${i}`, lowestPrice: 30 - i }));
+    const out = applyFilters(many, { query: 'x' });
+    expect(out).toHaveLength(20);
+    expect(out[0].lowestPrice).toBe(1); // cheapest first survives the cap
+    expect(out.some((e) => e.lowestPrice! > 20)).toBe(false); // priciest 10 dropped
+  });
+
   it('sorts cheapest get-in first and floats priceless events to the end', () => {
     const out = applyFilters(
       [ev({ id: 'mid', lowestPrice: 200 }), ev({ id: 'none' }), ev({ id: 'low', lowestPrice: 50 })],

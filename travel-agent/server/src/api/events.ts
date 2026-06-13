@@ -196,5 +196,6 @@ export function applyFilters(events: EventTicket[], params: EventSearchParams): 
     out = out.filter((e) => e.listingCount === undefined || e.listingCount >= params.quantity!);
   }
   // Cheapest get-in price first; events with no price float to the end.
-  return out.sort((a, b) => (a.lowestPrice ?? Infinity) - (b.lowestPrice ?? Infinity));
+  // Cap at 20 to match every other source and bound the agent's context cost.
+  return out.sort((a, b) => (a.lowestPrice ?? Infinity) - (b.lowestPrice ?? Infinity)).slice(0, 20);
 }
