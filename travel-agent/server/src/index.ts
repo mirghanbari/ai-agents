@@ -16,7 +16,7 @@ app.get('/api/health', (_req, res) => {
     model: env.anthropicModel,
     sources: {
       anthropic: Boolean(env.anthropicApiKey),
-      flights: Boolean(env.kiwiTequilaApiKey),
+      flights: Boolean(env.duffelToken),
       hotels: Boolean(env.rapidApiKey),
       activities: Boolean(env.rapidApiKey || env.viatorApiKey),
       // Always available: falls back to the keyless StubHub scraper when no

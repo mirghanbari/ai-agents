@@ -11,7 +11,9 @@ export const env = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
   anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
 
-  kiwiTequilaApiKey: process.env.KIWI_TEQUILA_API_KEY ?? '',
+  // Flights — Duffel (open self-serve signup, free test tokens). Replaced Kiwi
+  // Tequila (partner-gated) and Amadeus Self-Service (decommissioned 2026-07-17).
+  duffelToken: process.env.DUFFEL_ACCESS_TOKEN ?? '',
 
   rapidApiKey: process.env.RAPIDAPI_KEY ?? '',
   rapidApiBookingHost: process.env.RAPIDAPI_BOOKING_HOST || 'booking-com.p.rapidapi.com',
