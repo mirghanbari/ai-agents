@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { env, SourceError } from '../lib/env';
 import { asArray, dig, isRecord, pickNumber, pickString } from '../lib/coerce';
-import type { Flight } from '../types/travel';
+import type { Flight, FlightLeg } from '../types/travel';
 
 export interface FlightSearchParams {
   origin: string;
@@ -67,8 +67,15 @@ export async function resolvePlace(query: string): Promise<string> {
  * Build a Google Flights search URL. Duffel offers have no public deep link
  * (they're booked via API), so we point users at a pre-filled search instead.
  */
-export function googleFlightsUrl(origin: string, destination: string, departDate: string): string {
-  const q = `Flights from ${origin} to ${destination} on ${departDate}`;
+export function googleFlightsUrl(
+  origin: string,
+  destination: string,
+  departDate: string,
+  returnDate?: string,
+): string {
+  const q =
+    `Flights from ${origin} to ${destination} on ${departDate}` +
+    (returnDate ? ` returning ${returnDate}` : '');
   return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}`;
 }
 
@@ -82,18 +89,8 @@ export function formatDuration(iso: string | undefined): string {
   return `${h}h ${m}m`;
 }
 
-/**
- * Map a Duffel offer to our Flight shape. Routing/times come from the first
- * slice (the outbound); for round trips the price still reflects the whole
- * offer, matching how the UI card shows a single total.
- */
-export function mapFlight(raw: unknown): Flight | undefined {
-  if (!isRecord(raw)) return undefined;
-  const id = pickString(raw.id);
-  const price = pickNumber(raw.total_amount); // Duffel sends amounts as strings; pickNumber coerces
-  if (id === undefined || price === undefined) return undefined;
-
-  const slice = asArray(raw.slices)[0];
+/** Map a single Duffel slice (one direction) to a FlightLeg. */
+function mapSlice(slice: unknown): FlightLeg | undefined {
   if (!isRecord(slice)) return undefined;
   const segments = asArray(slice.segments);
   const firstSeg = segments[0];
@@ -102,9 +99,34 @@ export function mapFlight(raw: unknown): Flight | undefined {
   const carrierCode = pickString(dig(firstSeg, 'marketing_carrier', 'iata_code')) ?? '';
   const flightNo = pickString(dig(firstSeg, 'marketing_carrier_flight_number')) ?? '';
 
-  const origin = pickString(dig(slice, 'origin', 'iata_code')) ?? '';
-  const destination = pickString(dig(slice, 'destination', 'iata_code')) ?? '';
-  const departTime = pickString(dig(firstSeg, 'departing_at')) ?? '';
+  return {
+    origin: pickString(dig(slice, 'origin', 'iata_code')) ?? '',
+    destination: pickString(dig(slice, 'destination', 'iata_code')) ?? '',
+    departTime: pickString(dig(firstSeg, 'departing_at')) ?? '',
+    arriveTime: pickString(dig(lastSeg, 'arriving_at')) ?? '',
+    duration: formatDuration(pickString(slice.duration)),
+    stops: Math.max(0, segments.length - 1),
+    flightNumber: carrierCode && flightNo ? `${carrierCode}${flightNo}` : '',
+  };
+}
+
+/**
+ * Map a Duffel offer to our Flight shape. The outbound slice is flattened onto
+ * the Flight; a second slice (round trip) populates `returnLeg`. `price` is the
+ * whole-offer total, so for round trips it is the combined round-trip price.
+ */
+export function mapFlight(raw: unknown): Flight | undefined {
+  if (!isRecord(raw)) return undefined;
+  const id = pickString(raw.id);
+  const price = pickNumber(raw.total_amount); // Duffel sends amounts as strings; pickNumber coerces
+  if (id === undefined || price === undefined) return undefined;
+
+  const slices = asArray(raw.slices);
+  const outbound = mapSlice(slices[0]);
+  if (!outbound) return undefined;
+  const returnLeg = slices.length > 1 ? mapSlice(slices[1]) : undefined;
+
+  const firstSeg = asArray(dig(slices[0], 'segments'))[0];
 
   return {
     id,
@@ -112,17 +134,26 @@ export function mapFlight(raw: unknown): Flight | undefined {
       pickString(dig(raw, 'owner', 'name')) ??
       pickString(dig(firstSeg, 'marketing_carrier', 'name')) ??
       'Unknown',
-    flightNumber: carrierCode && flightNo ? `${carrierCode}${flightNo}` : '',
-    origin,
-    destination,
-    departTime,
-    arriveTime: pickString(dig(lastSeg, 'arriving_at')) ?? '',
-    duration: formatDuration(pickString(slice.duration)),
-    stops: Math.max(0, segments.length - 1),
+    flightNumber: outbound.flightNumber,
+    origin: outbound.origin,
+    destination: outbound.destination,
+    departTime: outbound.departTime,
+    arriveTime: outbound.arriveTime,
+    duration: outbound.duration,
+    stops: outbound.stops,
     price,
     currency: pickString(raw.total_currency) ?? 'USD',
     // Duffel offers have no public deep link; send users to a pre-filled search.
-    bookingUrl: origin && destination ? googleFlightsUrl(origin, destination, departTime.slice(0, 10)) : '',
+    bookingUrl:
+      outbound.origin && outbound.destination
+        ? googleFlightsUrl(
+            outbound.origin,
+            outbound.destination,
+            outbound.departTime.slice(0, 10),
+            returnLeg?.departTime.slice(0, 10),
+          )
+        : '',
+    ...(returnLeg ? { returnLeg } : {}),
   };
 }
 

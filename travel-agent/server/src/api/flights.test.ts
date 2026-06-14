@@ -24,6 +24,13 @@ describe('googleFlightsUrl', () => {
       'https://www.google.com/travel/flights?q=Flights%20from%20LHR%20to%20JFK%20on%202026-07-01',
     );
   });
+
+  it('appends the return date for round trips', () => {
+    expect(googleFlightsUrl('LHR', 'JFK', '2026-07-01', '2026-07-08')).toBe(
+      'https://www.google.com/travel/flights?q=' +
+        encodeURIComponent('Flights from LHR to JFK on 2026-07-01 returning 2026-07-08'),
+    );
+  });
 });
 
 describe('mapFlight', () => {
@@ -72,6 +79,41 @@ describe('mapFlight', () => {
         'https://www.google.com/travel/flights?q=' +
         encodeURIComponent('Flights from LHR to JFK on 2026-07-01'),
     });
+  });
+
+  it('populates returnLeg and a round-trip booking URL when a second slice exists', () => {
+    const returnSlice = {
+      origin: { iata_code: 'JFK' },
+      destination: { iata_code: 'LHR' },
+      duration: 'PT7H10M',
+      segments: [
+        {
+          departing_at: '2026-07-08T18:00:00',
+          arriving_at: '2026-07-09T06:10:00',
+          marketing_carrier: { name: 'British Airways', iata_code: 'BA' },
+          marketing_carrier_flight_number: '178',
+        },
+      ],
+    };
+    const roundTrip = { ...raw, slices: [raw.slices[0], returnSlice] };
+    const f = mapFlight(roundTrip)!;
+    expect(f.returnLeg).toEqual({
+      origin: 'JFK',
+      destination: 'LHR',
+      departTime: '2026-07-08T18:00:00',
+      arriveTime: '2026-07-09T06:10:00',
+      duration: '7h 10m',
+      stops: 0,
+      flightNumber: 'BA178',
+    });
+    // outbound fields stay on the top level; price is the whole-offer total
+    expect(f.origin).toBe('LHR');
+    expect(f.price).toBe(451);
+    expect(f.bookingUrl).toContain('returning%202026-07-08');
+  });
+
+  it('omits returnLeg for a one-way offer', () => {
+    expect(mapFlight(raw)?.returnLeg).toBeUndefined();
   });
 
   it('reports zero stops for a single-segment slice', () => {
