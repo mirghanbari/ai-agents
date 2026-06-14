@@ -13,9 +13,55 @@ export interface FlightSearchParams {
 }
 
 const DUFFEL_API = 'https://api.duffel.com/air/offer_requests';
+const DUFFEL_PLACES_API = 'https://api.duffel.com/places/suggestions';
 
 // Duffel cabin_class values map 1:1 to our Flight['cabin'] union, so no
 // translation table is needed (unlike Kiwi's single-letter codes).
+
+function duffelHeaders(): Record<string, string> {
+  return {
+    Authorization: `Bearer ${env.duffelToken}`,
+    'Duffel-Version': 'v2',
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+}
+
+const IATA_RE = /^[A-Za-z]{3}$/;
+
+/**
+ * Resolve a free-text place ("Seattle", "New York") to a Duffel-acceptable IATA
+ * code. The agent's tool accepts city names, but Duffel requires IATA codes and
+ * 422s on anything else. A 3-letter input is assumed to already be a code; the
+ * rest go through Duffel's Places API, preferring the city (covers all its
+ * airports) over a single airport.
+ */
+export async function resolvePlace(query: string): Promise<string> {
+  const trimmed = query.trim();
+  if (IATA_RE.test(trimmed)) return trimmed.toUpperCase();
+
+  let places: unknown[];
+  try {
+    const { data } = await axios.get(DUFFEL_PLACES_API, {
+      params: { query: trimmed },
+      headers: duffelHeaders(),
+      timeout: 15_000,
+    });
+    places = asArray(dig(data, 'data'));
+  } catch (err: unknown) {
+    const detail = axios.isAxiosError(err) ? `${err.response?.status ?? ''} ${err.message}` : String(err);
+    throw new SourceError('flights', `Duffel place lookup for "${query}" failed: ${detail}`);
+  }
+
+  const hasCode = (p: unknown): boolean => isRecord(p) && pickString(p.iata_code) !== undefined;
+  const city = places.find((p) => isRecord(p) && p.type === 'city' && hasCode(p));
+  const best = city ?? places.find(hasCode);
+  const code = pickString(dig(best, 'iata_code'));
+  if (!code) {
+    throw new SourceError('flights', `Couldn't find an airport or city matching "${query}".`);
+  }
+  return code.toUpperCase();
+}
 
 /**
  * Build a Google Flights search URL. Duffel offers have no public deep link
@@ -85,15 +131,17 @@ export async function searchFlights(params: FlightSearchParams): Promise<Flight[
     throw new SourceError('flights', 'DUFFEL_ACCESS_TOKEN not set — flight search disabled.');
   }
 
+  // Duffel needs IATA codes; the agent may pass city names. Resolve both first.
+  const [origin, destination] = await Promise.all([
+    resolvePlace(params.origin),
+    resolvePlace(params.destination),
+  ]);
+
   const slices: Record<string, string>[] = [
-    { origin: params.origin, destination: params.destination, departure_date: params.departDate },
+    { origin, destination, departure_date: params.departDate },
   ];
   if (params.returnDate) {
-    slices.push({
-      origin: params.destination,
-      destination: params.origin,
-      departure_date: params.returnDate,
-    });
+    slices.push({ origin: destination, destination: origin, departure_date: params.returnDate });
   }
 
   const body = {
@@ -109,12 +157,7 @@ export async function searchFlights(params: FlightSearchParams): Promise<Flight[
     // request is enough; we sort by price and cap at 20 ourselves.
     const { data } = await axios.post(DUFFEL_API, body, {
       params: { return_offers: true },
-      headers: {
-        Authorization: `Bearer ${env.duffelToken}`,
-        'Duffel-Version': 'v2',
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers: duffelHeaders(),
       timeout: 30_000,
     });
 
@@ -128,9 +171,16 @@ export async function searchFlights(params: FlightSearchParams): Promise<Flight[
     if (params.cabin) return flights.map((f) => ({ ...f, cabin: params.cabin }));
     return flights;
   } catch (err: unknown) {
-    const detail = axios.isAxiosError(err)
-      ? `${err.response?.status ?? ''} ${err.message}`
-      : String(err);
-    throw new SourceError('flights', `Duffel request failed: ${detail}`);
+    throw new SourceError('flights', `Duffel request failed: ${describeDuffelError(err)}`);
   }
+}
+
+/** Pull Duffel's structured error messages out of a failed response, if present. */
+function describeDuffelError(err: unknown): string {
+  if (!axios.isAxiosError(err)) return String(err);
+  const messages = asArray(dig(err.response?.data, 'errors'))
+    .map((e) => pickString(dig(e, 'message')) ?? pickString(dig(e, 'title')))
+    .filter((s): s is string => !!s);
+  if (messages.length) return messages.join('; ');
+  return `${err.response?.status ?? ''} ${err.message}`.trim();
 }
