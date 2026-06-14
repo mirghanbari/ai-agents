@@ -23,6 +23,18 @@ export interface TripIntent {
 
 // ── Result entities ─────────────────────────────────────────────────────────
 
+/** One direction of travel. The outbound is flattened onto Flight; the return,
+ * when present, lives in Flight.returnLeg. */
+export interface FlightLeg {
+  origin: string;
+  destination: string;
+  departTime: string;
+  arriveTime: string;
+  duration: string;
+  stops: number;
+  flightNumber: string;
+}
+
 export interface Flight {
   id: string;
   airline: string;
@@ -33,10 +45,11 @@ export interface Flight {
   arriveTime: string;
   duration: string;
   stops: number;
-  price: number;
+  price: number; // for round trips this is the total round-trip price
   currency: string;
   bookingUrl: string;
   cabin?: 'economy' | 'premium_economy' | 'business' | 'first';
+  returnLeg?: FlightLeg; // present only for round-trip offers
 }
 
 export interface Hotel {

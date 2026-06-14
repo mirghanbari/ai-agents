@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { env, SourceError } from '../lib/env';
 import { asArray, dig, isRecord, pickNumber, pickString } from '../lib/coerce';
-import type { Flight } from '../types/travel';
+import type { Flight, FlightLeg } from '../types/travel';
 
 export interface FlightSearchParams {
   origin: string;
@@ -12,92 +12,206 @@ export interface FlightSearchParams {
   cabin?: Flight['cabin'];
 }
 
-const CABIN_CODE: Record<NonNullable<Flight['cabin']>, string> = {
-  economy: 'M',
-  premium_economy: 'W',
-  business: 'C',
-  first: 'F',
-};
+const DUFFEL_API = 'https://api.duffel.com/air/offer_requests';
+const DUFFEL_PLACES_API = 'https://api.duffel.com/places/suggestions';
 
-/** Kiwi expects DD/MM/YYYY. */
-function toKiwiDate(isoDate: string): string {
-  const [y, m, d] = isoDate.split('-');
-  return `${d}/${m}/${y}`;
+// Duffel cabin_class values map 1:1 to our Flight['cabin'] union, so no
+// translation table is needed (unlike Kiwi's single-letter codes).
+
+function duffelHeaders(): Record<string, string> {
+  return {
+    Authorization: `Bearer ${env.duffelToken}`,
+    'Duffel-Version': 'v2',
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
 }
 
-/** Seconds → "Xh Ym". */
-function formatDuration(seconds: number | undefined): string {
-  if (seconds === undefined) return '';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
+const IATA_RE = /^[A-Za-z]{3}$/;
+
+/**
+ * Resolve a free-text place ("Seattle", "New York") to a Duffel-acceptable IATA
+ * code. The agent's tool accepts city names, but Duffel requires IATA codes and
+ * 422s on anything else. A 3-letter input is assumed to already be a code; the
+ * rest go through Duffel's Places API, preferring the city (covers all its
+ * airports) over a single airport.
+ */
+export async function resolvePlace(query: string): Promise<string> {
+  const trimmed = query.trim();
+  if (IATA_RE.test(trimmed)) return trimmed.toUpperCase();
+
+  let places: unknown[];
+  try {
+    const { data } = await axios.get(DUFFEL_PLACES_API, {
+      params: { query: trimmed },
+      headers: duffelHeaders(),
+      timeout: 15_000,
+    });
+    places = asArray(dig(data, 'data'));
+  } catch (err: unknown) {
+    const detail = axios.isAxiosError(err) ? `${err.response?.status ?? ''} ${err.message}` : String(err);
+    throw new SourceError('flights', `Duffel place lookup for "${query}" failed: ${detail}`);
+  }
+
+  const hasCode = (p: unknown): boolean => isRecord(p) && pickString(p.iata_code) !== undefined;
+  const city = places.find((p) => isRecord(p) && p.type === 'city' && hasCode(p));
+  const best = city ?? places.find(hasCode);
+  const code = pickString(dig(best, 'iata_code'));
+  if (!code) {
+    throw new SourceError('flights', `Couldn't find an airport or city matching "${query}".`);
+  }
+  return code.toUpperCase();
+}
+
+/**
+ * Build a Google Flights search URL. Duffel offers have no public deep link
+ * (they're booked via API), so we point users at a pre-filled search instead.
+ */
+export function googleFlightsUrl(
+  origin: string,
+  destination: string,
+  departDate: string,
+  returnDate?: string,
+): string {
+  const q =
+    `Flights from ${origin} to ${destination} on ${departDate}` +
+    (returnDate ? ` returning ${returnDate}` : '');
+  return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}`;
+}
+
+/** Parse an ISO 8601 duration ("PT8H30M") into "Xh Ym". */
+export function formatDuration(iso: string | undefined): string {
+  if (!iso) return '';
+  const match = /PT(?:(\d+)H)?(?:(\d+)M)?/.exec(iso);
+  if (!match) return '';
+  const h = Number(match[1] ?? 0);
+  const m = Number(match[2] ?? 0);
   return `${h}h ${m}m`;
 }
 
-function mapFlight(raw: unknown, currency: string): Flight | undefined {
-  if (!isRecord(raw)) return undefined;
-  const price = pickNumber(raw.price);
-  const id = pickString(raw.id);
-  if (price === undefined || id === undefined) return undefined;
+/** Map a single Duffel slice (one direction) to a FlightLeg. */
+function mapSlice(slice: unknown): FlightLeg | undefined {
+  if (!isRecord(slice)) return undefined;
+  const segments = asArray(slice.segments);
+  const firstSeg = segments[0];
+  const lastSeg = segments[segments.length - 1];
 
-  const airlines = asArray(raw.airlines).map(pickString).filter((s): s is string => !!s);
-  const route = asArray(raw.route);
-  const firstLeg = route[0];
-  const flightNo = isRecord(firstLeg)
-    ? `${pickString(firstLeg.airline) ?? ''}${pickString(firstLeg.flight_no) ?? ''}`
-    : '';
+  const carrierCode = pickString(dig(firstSeg, 'marketing_carrier', 'iata_code')) ?? '';
+  const flightNo = pickString(dig(firstSeg, 'marketing_carrier_flight_number')) ?? '';
+
+  return {
+    origin: pickString(dig(slice, 'origin', 'iata_code')) ?? '',
+    destination: pickString(dig(slice, 'destination', 'iata_code')) ?? '',
+    departTime: pickString(dig(firstSeg, 'departing_at')) ?? '',
+    arriveTime: pickString(dig(lastSeg, 'arriving_at')) ?? '',
+    duration: formatDuration(pickString(slice.duration)),
+    stops: Math.max(0, segments.length - 1),
+    flightNumber: carrierCode && flightNo ? `${carrierCode}${flightNo}` : '',
+  };
+}
+
+/**
+ * Map a Duffel offer to our Flight shape. The outbound slice is flattened onto
+ * the Flight; a second slice (round trip) populates `returnLeg`. `price` is the
+ * whole-offer total, so for round trips it is the combined round-trip price.
+ */
+export function mapFlight(raw: unknown): Flight | undefined {
+  if (!isRecord(raw)) return undefined;
+  const id = pickString(raw.id);
+  const price = pickNumber(raw.total_amount); // Duffel sends amounts as strings; pickNumber coerces
+  if (id === undefined || price === undefined) return undefined;
+
+  const slices = asArray(raw.slices);
+  const outbound = mapSlice(slices[0]);
+  if (!outbound) return undefined;
+  const returnLeg = slices.length > 1 ? mapSlice(slices[1]) : undefined;
+
+  const firstSeg = asArray(dig(slices[0], 'segments'))[0];
 
   return {
     id,
-    airline: airlines[0] ?? pickString(dig(raw, 'airlines', 0)) ?? 'Unknown',
-    flightNumber: flightNo,
-    origin: pickString(raw.flyFrom) ?? pickString(raw.cityFrom) ?? '',
-    destination: pickString(raw.flyTo) ?? pickString(raw.cityTo) ?? '',
-    departTime: pickString(raw.local_departure) ?? '',
-    arriveTime: pickString(raw.local_arrival) ?? '',
-    duration: formatDuration(pickNumber(dig(raw, 'duration', 'total'))),
-    stops: Math.max(0, route.length - 1),
+    airline:
+      pickString(dig(raw, 'owner', 'name')) ??
+      pickString(dig(firstSeg, 'marketing_carrier', 'name')) ??
+      'Unknown',
+    flightNumber: outbound.flightNumber,
+    origin: outbound.origin,
+    destination: outbound.destination,
+    departTime: outbound.departTime,
+    arriveTime: outbound.arriveTime,
+    duration: outbound.duration,
+    stops: outbound.stops,
     price,
-    currency,
-    bookingUrl: pickString(raw.deep_link) ?? pickString(raw.booking_token) ?? '',
+    currency: pickString(raw.total_currency) ?? 'USD',
+    // Duffel offers have no public deep link; send users to a pre-filled search.
+    bookingUrl:
+      outbound.origin && outbound.destination
+        ? googleFlightsUrl(
+            outbound.origin,
+            outbound.destination,
+            outbound.departTime.slice(0, 10),
+            returnLeg?.departTime.slice(0, 10),
+          )
+        : '',
+    ...(returnLeg ? { returnLeg } : {}),
   };
 }
 
 export async function searchFlights(params: FlightSearchParams): Promise<Flight[]> {
-  if (!env.kiwiTequilaApiKey) {
-    throw new SourceError('flights', 'KIWI_TEQUILA_API_KEY not set — flight search disabled.');
+  if (!env.duffelToken) {
+    throw new SourceError('flights', 'DUFFEL_ACCESS_TOKEN not set — flight search disabled.');
   }
 
-  const query: Record<string, string | number> = {
-    fly_from: params.origin,
-    fly_to: params.destination,
-    date_from: toKiwiDate(params.departDate),
-    date_to: toKiwiDate(params.departDate),
-    adults: params.adults,
-    curr: 'USD',
-    limit: 20,
-    sort: 'price',
-  };
+  // Duffel needs IATA codes; the agent may pass city names. Resolve both first.
+  const [origin, destination] = await Promise.all([
+    resolvePlace(params.origin),
+    resolvePlace(params.destination),
+  ]);
+
+  const slices: Record<string, string>[] = [
+    { origin, destination, departure_date: params.departDate },
+  ];
   if (params.returnDate) {
-    query.return_from = toKiwiDate(params.returnDate);
-    query.return_to = toKiwiDate(params.returnDate);
+    slices.push({ origin: destination, destination: origin, departure_date: params.returnDate });
   }
-  if (params.cabin) query.selected_cabins = CABIN_CODE[params.cabin];
+
+  const body = {
+    data: {
+      slices,
+      passengers: Array.from({ length: Math.max(1, params.adults) }, () => ({ type: 'adult' })),
+      ...(params.cabin ? { cabin_class: params.cabin } : {}),
+    },
+  };
 
   try {
-    const { data } = await axios.get('https://api.tequila.kiwi.com/v2/search', {
-      params: query,
-      headers: { apikey: env.kiwiTequilaApiKey },
-      timeout: 20_000,
+    // return_offers=true (default) returns the priced offers inline, so a single
+    // request is enough; we sort by price and cap at 20 ourselves.
+    const { data } = await axios.post(DUFFEL_API, body, {
+      params: { return_offers: true },
+      headers: duffelHeaders(),
+      timeout: 30_000,
     });
-    const currency = pickString(dig(data, 'currency')) ?? 'USD';
-    const items = asArray(dig(data, 'data'));
-    const flights = items
-      .map((item) => mapFlight(item, currency))
-      .filter((f): f is Flight => f !== undefined);
+
+    const offers = asArray(dig(data, 'data', 'offers'));
+    const flights = offers
+      .map(mapFlight)
+      .filter((f): f is Flight => f !== undefined)
+      .sort((a, b) => a.price - b.price)
+      .slice(0, 20);
+
     if (params.cabin) return flights.map((f) => ({ ...f, cabin: params.cabin }));
     return flights;
   } catch (err: unknown) {
-    const detail = axios.isAxiosError(err) ? `${err.response?.status ?? ''} ${err.message}` : String(err);
-    throw new SourceError('flights', `Kiwi Tequila request failed: ${detail}`);
+    throw new SourceError('flights', `Duffel request failed: ${describeDuffelError(err)}`);
   }
+}
+
+/** Pull Duffel's structured error messages out of a failed response, if present. */
+function describeDuffelError(err: unknown): string {
+  if (!axios.isAxiosError(err)) return String(err);
+  const messages = asArray(dig(err.response?.data, 'errors'))
+    .map((e) => pickString(dig(e, 'message')) ?? pickString(dig(e, 'title')))
+    .filter((s): s is string => !!s);
+  if (messages.length) return messages.join('; ');
+  return `${err.response?.status ?? ''} ${err.message}`.trim();
 }
