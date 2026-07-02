@@ -189,6 +189,7 @@ export interface SearchParams {
   children?: number;
   maxPricePerNight?: number;
   minStars?: number;
+  pets?: number; // traveling pets — stays filter to pet-friendly listings
   carCategory?: 'economy' | 'compact' | 'midsize' | 'suv' | 'luxury' | 'any';
   cabin?: 'economy' | 'premium_economy' | 'business' | 'first';
   activityCategory?: string;

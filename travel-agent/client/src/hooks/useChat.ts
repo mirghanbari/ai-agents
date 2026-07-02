@@ -36,7 +36,7 @@ export function useChat() {
   const abortRef = useRef<AbortController | null>(null);
 
   const sendMessage = useCallback(
-    async (userText: string) => {
+    async (userText: string, useSubscription = false) => {
       abortRef.current?.abort();
       abortRef.current = new AbortController();
 
@@ -64,7 +64,10 @@ export function useChat() {
       });
 
       try {
-        const response = await fetch('/api/chat', {
+        // Subscription mode routes through the Claude Agent SDK (billed to a
+        // Claude Pro/Max plan); default mode uses the API-key endpoint.
+        const endpoint = useSubscription ? '/api/chat/subscription' : '/api/chat';
+        const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: abortRef.current.signal,

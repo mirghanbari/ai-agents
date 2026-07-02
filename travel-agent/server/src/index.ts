@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { env } from './lib/env';
 import chatRouter from './routes/chat';
+import chatSdkRouter from './routes/chatSdk';
 import searchRouter from './routes/search';
 import { closeBrowser } from './scrapers/browser';
 
@@ -16,6 +17,11 @@ app.get('/api/health', (_req, res) => {
     model: env.anthropicModel,
     sources: {
       anthropic: Boolean(env.anthropicApiKey),
+      // Subscription auth via the Claude Agent SDK (no API credits billed).
+      // Available whenever the machine has a Claude Code login or an explicit
+      // CLAUDE_CODE_OAUTH_TOKEN; the endpoint resolves auth at request time.
+      subscription: true,
+      subscriptionTokenConfigured: Boolean(env.claudeCodeOAuthToken),
       flights: Boolean(env.duffelToken),
       hotels: Boolean(env.rapidApiKey),
       activities: Boolean(env.rapidApiKey || env.viatorApiKey),
@@ -27,6 +33,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+app.use('/api/chat/subscription', chatSdkRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/search', searchRouter);
 

@@ -16,6 +16,7 @@ const SearchRequestSchema = z.object({
   children: z.number().int().nonnegative().optional(),
   maxPricePerNight: z.number().positive().optional(),
   minStars: z.number().min(1).max(5).optional(),
+  pets: z.number().int().positive().optional(),
   carCategory: z.enum(['economy', 'compact', 'midsize', 'suv', 'luxury', 'any']).optional(),
   cabin: z.enum(['economy', 'premium_economy', 'business', 'first']).optional(),
   activityCategory: z.string().optional(),

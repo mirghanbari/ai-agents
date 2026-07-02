@@ -16,6 +16,9 @@ interface ChatInterfaceProps {
   activeSearches: string[];
   currentResults: SearchResults | null;
   onSend: (text: string) => void;
+  subscriptionMode: boolean;
+  subscriptionAvailable: boolean;
+  onToggleSubscription: (on: boolean) => void;
 }
 
 export default function ChatInterface({
@@ -26,6 +29,9 @@ export default function ChatInterface({
   activeSearches,
   currentResults,
   onSend,
+  subscriptionMode,
+  subscriptionAvailable,
+  onToggleSubscription,
 }: ChatInterfaceProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -69,7 +75,13 @@ export default function ChatInterface({
         )}
       </div>
 
-      <ChatInput onSend={onSend} disabled={isStreaming} />
+      <ChatInput
+        onSend={onSend}
+        disabled={isStreaming}
+        subscriptionMode={subscriptionMode}
+        subscriptionAvailable={subscriptionAvailable}
+        onToggleSubscription={onToggleSubscription}
+      />
     </div>
   );
 }

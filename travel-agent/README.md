@@ -10,7 +10,7 @@ to a React UI.
 You ───▶ Express /api/chat (SSE) ───▶ Claude (tool use)
                                          │  parallel tool calls
                  ┌──────────────────┬────┼─────────────────┬──────────────────┐
-              Kiwi API     Booking/Viator (RapidAPI)  SeatGeek API     Playwright + stealth
+             Duffel API    Booking/Viator (RapidAPI)  SeatGeek API     Playwright + stealth
             (flights)      (hotels, activities)       (event tickets)  (Airbnb / VRBO / Kayak / StubHub)
                  └──────────────────┴────┼─────────────────┴──────────────────┘
                                   Claude synthesizes ─▶ streamed back to the UI
@@ -21,7 +21,7 @@ You ───▶ Express /api/chat (SSE) ───▶ Claude (tool use)
 - **Frontend** — React 18 + TypeScript + Vite, Tailwind CSS v3, TanStack Query
   (server state), Zustand (UI + itinerary state), React Hook Form + Zod.
 - **Backend** — Node + Express + TypeScript, Anthropic SDK with tool use, SSE streaming.
-- **Search** — axios for API integrations (Kiwi Tequila, RapidAPI Booking/Viator,
+- **Search** — axios for API integrations (Duffel flights, RapidAPI Booking/Viator,
   SeatGeek/StubHub tickets); Playwright + `playwright-extra` + stealth for
   Airbnb / VRBO / Kayak / StubHub scraping.
 
@@ -74,7 +74,8 @@ scrapers (no keys needed); add the rest as you go.
 | Source | Variable | Where to get it |
 | --- | --- | --- |
 | **Claude (required)** | `ANTHROPIC_API_KEY` | https://console.anthropic.com |
-| Flights | `KIWI_TEQUILA_API_KEY` | https://tequila.kiwi.com (free tier) |
+| Claude via subscription (alt) | `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` — or just `claude login` and leave it blank |
+| Flights | `DUFFEL_ACCESS_TOKEN` | https://app.duffel.com (free test tokens; searching is free) |
 | Hotels + Activities | `RAPIDAPI_KEY` | https://rapidapi.com (subscribe to Booking.com + a Tours/Travel-Advisor API) |
 | Activities (alt) | `VIATOR_API_KEY` | https://api.viator.com/partner |
 | Event tickets | `SEATGEEK_CLIENT_ID` | https://seatgeek.com/account/develop (free) |
@@ -82,6 +83,24 @@ scrapers (no keys needed); add the rest as you go.
 | Airbnb / VRBO / Cars / StubHub | _none_ | Playwright scrapers — just run `playwright:install` |
 
 `GET /api/health` reports which sources are configured.
+
+### Two ways to pay for Claude
+
+The agent can run on either billing model, and the UI can switch between them:
+
+- **API credits** (`ANTHROPIC_API_KEY`) → `POST /api/chat`. Pay-as-you-go from
+  the Anthropic Console; the classic path.
+- **Claude Pro/Max subscription** (no per-request charge) → `POST /api/chat/subscription`.
+  Runs the same Wayfarer agent and the same seven searches through the
+  [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk), which
+  authenticates against your Claude subscription instead of billing credits.
+  If you're already logged in with `claude login`, it works with no extra
+  config; for a headless server, set `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`).
+  The subscription route deliberately strips `ANTHROPIC_API_KEY` from the SDK
+  subprocess so it can't silently fall back to credit billing.
+
+Both routes stream the identical SSE event protocol, so the React client uses
+whichever you point it at.
 
 ## Model note
 
@@ -103,14 +122,30 @@ runs from source via `tsx`, so there is no separate compile step).
 ## Debugging scrapers
 
 Scrapers are the brittle part of any travel tool — sites change layouts and fight
-bots. If a scraper returns **0 results**:
+bots. Robustness is layered:
 
-1. Set `HEADLESS=false` in `.env` and re-run — you'll see the real browser and
-   can spot a CAPTCHA, login wall, or layout change.
-2. Each scraper tries an **XHR-intercept** strategy first (reading the site's own
-   JSON API responses), then falls back to **DOM scraping**. Both are best-effort
-   and matched structurally, so a site redesign degrades gracefully to an error
-   rather than crashing the whole search.
+1. **Retries with fresh sessions** — every scrape runs up to `SCRAPER_ATTEMPTS`
+   (default 2) times; each attempt gets a brand-new browser context with a
+   different fingerprint (UA/viewport/timezone), since challenges are usually
+   per-session.
+2. **Block detection** — after a failed harvest the rendered page is checked for
+   CAPTCHA / press-and-hold / access-denied interstitials, so the agent reports
+   *"blocked by a CAPTCHA challenge"* instead of a misleading "0 results".
+3. **Layered extraction** — each scraper tries the site's own JSON API responses
+   (XHR intercept, exact shape first, then structural matching), then falls back
+   to DOM scraping. A site redesign degrades gracefully to an error rather than
+   crashing the whole search.
+4. **Geocode verification (Airbnb)** — Airbnb's geocoder silently resolves
+   ambiguous towns to bigger namesakes ("Long Beach, WA" → Long Beach, CA). The
+   query is independently geocoded via OSM Nominatim and listings whose
+   coordinates land in the wrong region are dropped; if *everything* landed
+   wrong, the error tells the agent to retry with a disambiguated query.
+5. **Proxy support** — set `PROXY_SERVER` (+ optional `PROXY_USERNAME` /
+   `PROXY_PASSWORD`). Blocks are mostly IP-reputation based, so a residential
+   or ISP proxy is the biggest reliability upgrade on a flagged/datacenter IP.
+
+If a scraper still returns 0 results, set `HEADLESS=false` in `.env` and re-run —
+you'll see the real browser and can spot a CAPTCHA, login wall, or layout change.
 
 ### Known bot-detection issues per site
 

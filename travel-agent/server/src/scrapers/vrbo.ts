@@ -1,7 +1,7 @@
 import type { Page } from 'playwright';
 import { SourceError } from '../lib/env';
 import { isRecord, pickInt, pickNumber, pickString } from '../lib/coerce';
-import { jitter, withContext } from './browser';
+import { jitter, looksBlocked, withContext, withRetry } from './browser';
 import type { Listing } from '../types/travel';
 
 export interface VrboSearchParams {
@@ -52,21 +52,31 @@ function harvestListings(node: unknown, out: Map<string, Listing>): void {
 
 async function scrapeDom(page: Page): Promise<Listing[]> {
   return page.evaluate(() => {
-    const cards = Array.from(document.querySelectorAll('[data-stid="property-listing"]'));
+    // Current layout uses Expedia UITK cards (lodging-card-responsive);
+    // property-listing is the pre-2026 selector, kept for older markup.
+    const cards = Array.from(
+      document.querySelectorAll('[data-stid="lodging-card-responsive"], [data-stid="property-listing"]'),
+    );
     return cards.slice(0, 20).map((card, i): Listing => {
       const link = card.querySelector('a[href]') as HTMLAnchorElement | null;
       const href = link?.href ?? '';
-      const priceText = card.textContent ?? '';
-      const priceMatch = priceText.replace(/,/g, '').match(/\$\s?(\d+)/);
+      const idMatch = href.match(/vrbo\.com\/(\d+)/);
+      const text = (card.textContent ?? '').replace(/,/g, '');
+      // Cards show the nightly rate first, then "$N for X nights" as the total.
+      const nightlyMatch = text.match(/\$\s?(\d+)/);
+      const totalMatch = text.match(/\$\s?(\d+)\s*for/);
       const img = card.querySelector('img') as HTMLImageElement | null;
-      const title = card.querySelector('h3, [data-stid="content-hotel-title"]')?.textContent ?? `VRBO stay ${i + 1}`;
+      const title =
+        card.querySelector('h3, [data-stid="content-hotel-title"]')?.textContent?.replace(/^Photo gallery for /, '') ??
+        `VRBO stay ${i + 1}`;
       return {
-        id: href || `vrbo-${i}`,
+        id: idMatch ? idMatch[1] : href || `vrbo-${i}`,
         source: 'vrbo' as const,
         title: title.trim(),
         url: href,
         thumbnailUrl: img?.src ?? '',
-        pricePerNight: priceMatch ? Number(priceMatch[1]) : 0,
+        pricePerNight: nightlyMatch ? Number(nightlyMatch[1]) : 0,
+        totalPrice: totalMatch ? Number(totalMatch[1]) : undefined,
         currency: 'USD',
       };
     });
@@ -74,7 +84,8 @@ async function scrapeDom(page: Page): Promise<Listing[]> {
 }
 
 export async function searchVrbo(params: VrboSearchParams): Promise<Listing[]> {
-  return withContext(async (page) => {
+  return withRetry('vrbo', (attempt) =>
+    withContext(async (page) => {
     const intercepted = new Map<string, Listing>();
 
     page.on('response', (response) => {
@@ -111,12 +122,19 @@ export async function searchVrbo(params: VrboSearchParams): Promise<Listing[]> {
       listings = await scrapeDom(page).catch(() => []);
     }
     if (listings.length === 0) {
-      throw new SourceError('vrbo', 'Returned 0 listings (possible bot block — try HEADLESS=false).');
+      const block = await looksBlocked(page);
+      throw new SourceError(
+        'vrbo',
+        block
+          ? `Blocked by a ${block} (attempt ${attempt}). A residential IP (PROXY_SERVER) or HEADLESS=false is most reliable.`
+          : 'Returned 0 listings (possible bot block or layout change — try HEADLESS=false).',
+      );
     }
 
     if (params.maxPricePerNight !== undefined) {
       listings = listings.filter((l) => l.pricePerNight <= params.maxPricePerNight!);
     }
     return listings.slice(0, 20);
-  });
+    }),
+  );
 }

@@ -1,7 +1,7 @@
 import type { Page } from 'playwright';
 import { SourceError } from '../lib/env';
 import { isRecord, pickInt, pickNumber, pickString } from '../lib/coerce';
-import { jitter, wiggleMouse, withContext } from './browser';
+import { jitter, looksBlocked, wiggleMouse, withContext, withRetry } from './browser';
 import type { RentalCar } from '../types/travel';
 
 export interface CarSearchParams {
@@ -48,24 +48,47 @@ function harvestCars(node: unknown, out: Map<string, RentalCar>, days: number): 
   for (const value of Object.values(node)) harvestCars(value, out, days);
 }
 
+// `.js-result` is Kayak's current stable hook (the styled classes like
+// "jo6g-car-result-item" are build-hashed and rotate); the rest are older
+// layouts kept as fallbacks.
+const RESULT_SELECTOR =
+  '.js-result, [class*="car-result-item"], [class*="resultWrapper"], [data-resultid]';
+
 async function scrapeDom(page: Page, days: number): Promise<RentalCar[]> {
-  const raw = await page.evaluate(() => {
-    const cards = Array.from(document.querySelectorAll('[class*="resultWrapper"], [data-resultid]'));
+  const raw = await page.evaluate((selector) => {
+    const cards = Array.from(document.querySelectorAll(selector));
     return cards.slice(0, 20).map((card, i) => {
-      const text = card.textContent ?? '';
-      const priceMatch = text.replace(/,/g, '').match(/\$\s?(\d+)/);
       const img = card.querySelector('img') as HTMLImageElement | null;
-      const name = card.querySelector('[class*="carName"], [class*="vehicle"]')?.textContent ?? `Car ${i + 1}`;
-      const supplier = card.querySelector('[class*="agency"], [class*="provider"]')?.textContent ?? 'Unknown';
+      // The vehicle image alt is structured: "Vehicle type: Minivan - Chrysler
+      // Pacifica or similar" — the most reliable name/category source.
+      const altMatch = (img?.alt ?? '').match(/Vehicle type:\s*(.+?)\s*-\s*(.+?)(?:\s+or similar.*)?$/);
+      // Offers render as "...\n{supplier}\n${price}\nTotal\n..." — the first
+      // such triple is the headline (best) offer.
+      const lines = ((card as HTMLElement).innerText ?? '').split('\n').map((l) => l.trim());
+      let price = 0;
+      let supplier = 'Unknown';
+      for (let j = 1; j < lines.length - 1; j++) {
+        const m = lines[j].match(/^\$\s?([\d,]+)$/);
+        if (m && /^total/i.test(lines[j + 1] ?? '')) {
+          price = Number(m[1].replace(/,/g, ''));
+          supplier = lines[j - 1] || 'Unknown';
+          break;
+        }
+      }
+      if (price === 0) {
+        const m = (card.textContent ?? '').replace(/,/g, '').match(/\$\s?(\d+)/);
+        price = m ? Number(m[1]) : 0;
+      }
       return {
         id: `kayak-car-${i}`,
-        name: name.trim(),
-        supplier: supplier.trim(),
-        price: priceMatch ? Number(priceMatch[1]) : 0,
+        name: altMatch?.[2]?.trim() ?? lines.find((l) => l.length > 3) ?? `Car ${i + 1}`,
+        category: altMatch?.[1]?.trim() ?? 'any',
+        supplier,
+        price,
         image: img?.src ?? '',
       };
     });
-  });
+  }, RESULT_SELECTOR);
 
   return raw
     .filter((r) => r.price > 0)
@@ -73,7 +96,7 @@ async function scrapeDom(page: Page, days: number): Promise<RentalCar[]> {
       id: r.id,
       supplier: r.supplier,
       carName: r.name,
-      carCategory: 'any',
+      carCategory: r.category,
       thumbnailUrl: r.image,
       pricePerDay: Math.round(r.price / days),
       totalPrice: r.price,
@@ -85,7 +108,8 @@ async function scrapeDom(page: Page, days: number): Promise<RentalCar[]> {
 export async function searchRentalCars(params: CarSearchParams): Promise<RentalCar[]> {
   const days = daysBetween(params.pickupDate, params.dropoffDate);
 
-  return withContext(async (page) => {
+  return withRetry('cars', (attempt) =>
+    withContext(async (page) => {
     const intercepted = new Map<string, RentalCar>();
 
     page.on('response', (response) => {
@@ -104,18 +128,36 @@ export async function searchRentalCars(params: CarSearchParams): Promise<RentalC
       // Kayak is aggressive about bot detection — go slow and look human.
       await jitter(3000, 5000);
       await wiggleMouse(page);
-      await page.mouse.wheel(0, 1800);
-      await jitter(3000, 5000);
+      // Results stream in over ~10-25s; poll instead of hoping a fixed sleep
+      // is long enough.
+      for (let i = 0; i < 8; i++) {
+        await page.mouse.wheel(0, 700);
+        await jitter(2000, 3500);
+        if (intercepted.size > 0) break;
+        const rendered = await page.locator(RESULT_SELECTOR).count().catch(() => 0);
+        if (rendered >= 5) break;
+      }
     } catch (err: unknown) {
       throw new SourceError('cars', `Navigation failed: ${String(err)}`);
     }
 
     let cars = [...intercepted.values()];
+    let domError = '';
     if (cars.length === 0) {
-      cars = await scrapeDom(page, days).catch(() => []);
+      cars = await scrapeDom(page, days).catch((e: unknown) => {
+        domError = ` DOM scrape failed: ${String(e).slice(0, 150)}.`;
+        return [];
+      });
     }
     if (cars.length === 0) {
-      throw new SourceError('cars', 'Returned 0 cars (Kayak bot block likely — try HEADLESS=false).');
+      const block = await looksBlocked(page);
+      const rendered = await page.locator(RESULT_SELECTOR).count().catch(() => -1);
+      throw new SourceError(
+        'cars',
+        block
+          ? `Blocked by a ${block} (attempt ${attempt}). Kayak is aggressive — a residential IP (PROXY_SERVER) helps most.`
+          : `Returned 0 cars (${rendered} result cards rendered).${domError} Kayak bot block or layout change — try HEADLESS=false.`,
+      );
     }
 
     if (params.carCategory && params.carCategory !== 'any') {
@@ -124,5 +166,6 @@ export async function searchRentalCars(params: CarSearchParams): Promise<RentalC
       if (filtered.length) cars = filtered;
     }
     return cars.slice(0, 20);
-  });
+    }),
+  );
 }

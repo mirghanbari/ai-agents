@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { useChat } from './hooks/useChat';
+import { useHealth } from './hooks/useHealth';
 import { useItinerary } from './hooks/useItinerary';
 import { useUiStore } from './store/uiStore';
 import ChatInterface from './components/ChatInterface';
@@ -7,9 +9,24 @@ import ErrorBanner from './components/ErrorBanner';
 
 export default function App() {
   const chat = useChat();
+  const health = useHealth();
   const itineraryOpen = useUiStore((s) => s.itineraryOpen);
   const toggleItinerary = useUiStore((s) => s.toggleItinerary);
   const savedCount = useItinerary((s) => s.items.length);
+
+  // Subscription mode routes chat through the Claude Agent SDK (billed to a
+  // Claude Pro/Max plan) instead of API credits. Default it on when the server
+  // has no API key but subscription auth is available — the common "I'm out of
+  // credits" case — otherwise keep the credits path.
+  const [subscriptionMode, setSubscriptionMode] = useState(false);
+  useEffect(() => {
+    if (health) setSubscriptionMode(!health.sources.anthropic && health.sources.subscription);
+  }, [health]);
+
+  const subscriptionAvailable = health?.sources.subscription ?? false;
+  const handleSend = (text: string): void => {
+    void chat.sendMessage(text, subscriptionMode);
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -48,7 +65,10 @@ export default function App() {
             isSearching={chat.isSearching}
             activeSearches={chat.activeSearches}
             currentResults={chat.currentResults}
-            onSend={chat.sendMessage}
+            onSend={handleSend}
+            subscriptionMode={subscriptionMode}
+            subscriptionAvailable={subscriptionAvailable}
+            onToggleSubscription={setSubscriptionMode}
           />
         </main>
 

@@ -59,6 +59,10 @@ export const toolDefinitions: Anthropic.Tool[] = [
         guests: { type: 'number' },
         minBedrooms: { type: 'number' },
         maxPricePerNight: { type: 'number' },
+        pets: {
+          type: 'number',
+          description: 'Number of pets traveling — filters to pet-friendly listings',
+        },
       },
       required: ['location', 'checkIn', 'checkOut', 'guests'],
     },
@@ -142,7 +146,7 @@ export const toolDefinitions: Anthropic.Tool[] = [
 
 // ── Zod schemas (validated before execution) ─────────────────────────────────
 
-const flightsSchema = z.object({
+export const flightsSchema = z.object({
   origin: z.string().min(1),
   destination: z.string().min(1),
   departDate: z.string().min(1),
@@ -151,7 +155,7 @@ const flightsSchema = z.object({
   cabin: z.enum(['economy', 'premium_economy', 'business', 'first']).optional(),
 });
 
-const hotelsSchema = z.object({
+export const hotelsSchema = z.object({
   destination: z.string().min(1),
   checkIn: z.string().min(1),
   checkOut: z.string().min(1),
@@ -160,7 +164,7 @@ const hotelsSchema = z.object({
   minStars: z.number().min(1).max(5).optional(),
 });
 
-const staySchema = z.object({
+export const staySchema = z.object({
   location: z.string().min(1),
   checkIn: z.string().min(1),
   checkOut: z.string().min(1),
@@ -169,14 +173,18 @@ const staySchema = z.object({
   maxPricePerNight: z.number().positive().optional(),
 });
 
-const carsSchema = z.object({
+export const airbnbSchema = staySchema.extend({
+  pets: z.number().int().positive().optional(),
+});
+
+export const carsSchema = z.object({
   pickupLocation: z.string().min(1),
   pickupDate: z.string().min(1),
   dropoffDate: z.string().min(1),
   carCategory: z.enum(['economy', 'compact', 'midsize', 'suv', 'luxury', 'any']).optional(),
 });
 
-const activitiesSchema = z.object({
+export const activitiesSchema = z.object({
   destination: z.string().min(1),
   date: z.string().optional(),
   category: z.string().optional(),
@@ -184,7 +192,7 @@ const activitiesSchema = z.object({
   maxPricePerPerson: z.number().positive().optional(),
 });
 
-const eventsSchema = z.object({
+export const eventsSchema = z.object({
   query: z.string().min(1),
   city: z.string().optional(),
   dateFrom: z.string().optional(),
@@ -227,7 +235,7 @@ export async function executeToolCall(
         return { hotels: await searchHotels(p) };
       }
       case 'search_airbnb': {
-        const p = staySchema.parse(input);
+        const p = airbnbSchema.parse(input);
         return { listings: await searchAirbnb(p) };
       }
       case 'search_vrbo': {

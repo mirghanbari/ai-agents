@@ -53,6 +53,7 @@ function toToolCall(
           checkOut,
           guests,
           maxPricePerNight: p.maxPricePerNight,
+          pets: p.pets,
         },
       };
     case 'vrbo':
