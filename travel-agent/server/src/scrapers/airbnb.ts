@@ -253,13 +253,22 @@ export async function searchAirbnb(params: AirbnbSearchParams): Promise<Listing[
     }
 
     if (kept.length === 0 && wrong.length > 0) {
-      const sample = wrong[0].coordinates!;
-      const km = Math.round(haversineKm({ lat: sample.lat, lng: sample.lng }, region!.center));
-      throw new SourceError(
-        'airbnb',
-        `Airbnb resolved "${params.location}" to a different region (listings landed ~${km} km away). ` +
-          'Retry with a disambiguated location such as "Town, State" or "Town, Country".',
-      );
+      // Every listing landed outside our geocoded region. Only treat that as a
+      // hard failure when the user was specific (e.g. "Town, State") — then we
+      // trust our geocode and ask the agent to retry with a clearer query. For
+      // a bare, ambiguous name ("Springfield") the ambiguity cuts both ways and
+      // our geocode guess isn't authoritative, so return Airbnb's own results
+      // rather than erroring with nothing (the pre-geo-check behavior).
+      if (params.location.includes(',')) {
+        const sample = wrong[0].coordinates!;
+        const km = Math.round(haversineKm({ lat: sample.lat, lng: sample.lng }, region!.center));
+        throw new SourceError(
+          'airbnb',
+          `Airbnb resolved "${params.location}" to a different region (listings landed ~${km} km away). ` +
+            'Retry with a disambiguated location such as "Town, State" or "Town, Country".',
+        );
+      }
+      kept = wrong;
     }
 
     let listings = kept;

@@ -65,6 +65,23 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
+/**
+ * Pull search tool calls out of an assistant message so we can emit the same
+ * `searching` event the API-key route does (drives the client's progress
+ * indicator). SDK MCP tools are namespaced `mcp__<server>__<tool>`; the client
+ * expects the bare tool name (e.g. `search_flights`), so strip the prefix.
+ */
+function extractToolUses(message: SDKMessage): { name: string; input: unknown }[] {
+  if (message.type !== 'assistant') return [];
+  const content = (message as { message?: { content?: unknown } }).message?.content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((b): b is { type: 'tool_use'; name: string; input: unknown } =>
+      isRecord(b) && b.type === 'tool_use' && typeof b.name === 'string',
+    )
+    .map((b) => ({ name: b.name.replace(/^mcp__wayfarer-search__/, ''), input: b.input }));
+}
+
 router.post('/', async (req: Request, res: Response) => {
   const parsed = ChatRequestSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -86,6 +103,12 @@ router.post('/', async (req: Request, res: Response) => {
   }
   if (env.claudeCodeOAuthToken) subprocessEnv.CLAUDE_CODE_OAUTH_TOKEN = env.claudeCodeOAuthToken;
 
+  // Stop the agent loop (and the scrapers it drives) if the client goes away —
+  // otherwise a navigated-away request keeps spending a subscription call and
+  // browser time on output nobody will receive.
+  const abortController = new AbortController();
+  req.on('close', () => abortController.abort());
+
   const accumulated = emptyResults();
   const startTime = Date.now();
 
@@ -104,6 +127,7 @@ router.post('/', async (req: Request, res: Response) => {
       options: {
         model: env.anthropicModel,
         env: subprocessEnv,
+        abortController,
         // Our own persona only — don't inherit the Claude Code coding preset or
         // any on-disk project settings.
         systemPrompt: agentSystemPrompt,
@@ -124,6 +148,10 @@ router.post('/', async (req: Request, res: Response) => {
           sendEvent(res, 'token', { content: ev.delta.text });
         }
       } else if (message.type === 'assistant') {
+        // Surface tool calls as a `searching` event so the client shows its
+        // progress indicator during the (slow) scrape phase.
+        const toolUses = extractToolUses(message);
+        if (toolUses.length > 0) sendEvent(res, 'searching', { tools: toolUses });
         // With partial messages on, deltas already streamed the text; keep the
         // latest assistant text as the authoritative final for the message.
         const text = extractText(message);
@@ -140,10 +168,13 @@ router.post('/', async (req: Request, res: Response) => {
     sendEvent(res, 'results', { data: accumulated });
     sendEvent(res, 'done', { durationMs: accumulated.durationMs, finalText: lastFinalText });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    sendEvent(res, 'error', { message });
+    // An abort means the client already disconnected — nothing to report to.
+    if (!abortController.signal.aborted) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      sendEvent(res, 'error', { message });
+    }
   } finally {
-    res.end();
+    if (!res.writableEnded) res.end();
   }
 });
 

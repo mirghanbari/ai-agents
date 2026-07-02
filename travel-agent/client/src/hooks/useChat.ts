@@ -183,6 +183,7 @@ function hasAnyResults(r: SearchResults | null): boolean {
       r.listings?.length ||
       r.cars?.length ||
       r.activities?.length ||
+      r.events?.length ||
       (r.errors && Object.keys(r.errors).length),
   );
 }
