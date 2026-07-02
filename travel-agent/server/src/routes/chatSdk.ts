@@ -65,11 +65,14 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
+const WAYFARER_TOOL_PREFIX = 'mcp__wayfarer-search__';
+
 /**
- * Pull search tool calls out of an assistant message so we can emit the same
+ * Pull our search tool calls out of an assistant message so we can emit the same
  * `searching` event the API-key route does (drives the client's progress
- * indicator). SDK MCP tools are namespaced `mcp__<server>__<tool>`; the client
- * expects the bare tool name (e.g. `search_flights`), so strip the prefix.
+ * indicator). Only our own MCP tools (`mcp__wayfarer-search__*`) are surfaced —
+ * SDK-internal tools like ToolSearch are filtered out — and the namespace
+ * prefix is stripped so the client sees the bare name (e.g. `search_flights`).
  */
 function extractToolUses(message: SDKMessage): { name: string; input: unknown }[] {
   if (message.type !== 'assistant') return [];
@@ -77,9 +80,9 @@ function extractToolUses(message: SDKMessage): { name: string; input: unknown }[
   if (!Array.isArray(content)) return [];
   return content
     .filter((b): b is { type: 'tool_use'; name: string; input: unknown } =>
-      isRecord(b) && b.type === 'tool_use' && typeof b.name === 'string',
+      isRecord(b) && b.type === 'tool_use' && typeof b.name === 'string' && b.name.startsWith(WAYFARER_TOOL_PREFIX),
     )
-    .map((b) => ({ name: b.name.replace(/^mcp__wayfarer-search__/, ''), input: b.input }));
+    .map((b) => ({ name: b.name.slice(WAYFARER_TOOL_PREFIX.length), input: b.input }));
 }
 
 router.post('/', async (req: Request, res: Response) => {
@@ -105,9 +108,13 @@ router.post('/', async (req: Request, res: Response) => {
 
   // Stop the agent loop (and the scrapers it drives) if the client goes away —
   // otherwise a navigated-away request keeps spending a subscription call and
-  // browser time on output nobody will receive.
+  // browser time on output nobody will receive. Listen on the *response* close
+  // (guarded by writableEnded): `req` 'close' fires as soon as the small POST
+  // body is consumed, which would abort before the stream even starts.
   const abortController = new AbortController();
-  req.on('close', () => abortController.abort());
+  res.on('close', () => {
+    if (!res.writableEnded) abortController.abort();
+  });
 
   const accumulated = emptyResults();
   const startTime = Date.now();

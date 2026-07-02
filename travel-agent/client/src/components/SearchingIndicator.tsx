@@ -5,6 +5,7 @@ const SEARCH_LABELS: Record<string, string> = {
   search_vrbo: '🏡 Searching VRBO',
   search_rental_cars: '🚗 Searching rental cars',
   search_activities: '🎯 Finding activities',
+  search_event_tickets: '🎟️ Searching event tickets',
 };
 
 interface SearchingIndicatorProps {
