@@ -15,12 +15,12 @@ export default function App() {
   const savedCount = useItinerary((s) => s.items.length);
 
   // Subscription mode routes chat through the Claude Agent SDK (billed to a
-  // Claude Pro/Max plan) instead of API credits. Default it on when the server
-  // has no API key but subscription auth is available — the common "I'm out of
-  // credits" case — otherwise keep the credits path.
+  // Claude Pro/Max plan) instead of API credits. Default it on whenever
+  // subscription auth is available; the toggle still lets the user switch
+  // back to the credits path.
   const [subscriptionMode, setSubscriptionMode] = useState(false);
   useEffect(() => {
-    if (health) setSubscriptionMode(!health.sources.anthropic && health.sources.subscription);
+    if (health) setSubscriptionMode(health.sources.subscription);
   }, [health]);
 
   const subscriptionAvailable = health?.sources.subscription ?? false;
