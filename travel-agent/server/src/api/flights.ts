@@ -79,6 +79,41 @@ export function googleFlightsUrl(
   return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}`;
 }
 
+/**
+ * Duffel's sandbox mints a synthetic test carrier — "Duffel Airways", IATA
+ * code ZZ — whose offers carry realistic-looking flight numbers and prices but
+ * map to no real airline schedule and cannot be booked. They surface next to
+ * genuine carriers and are indistinguishable at a glance, so we strip any offer
+ * that involves ZZ (as owner, or on any marketing/operating segment) before it
+ * ever reaches the agent. Add other codes here if more phantom carriers appear.
+ */
+export const EXCLUDED_CARRIER_CODES = new Set(['ZZ']);
+
+/** Collect every carrier IATA code that appears anywhere on a Duffel offer. */
+function offerCarrierCodes(raw: unknown): string[] {
+  if (!isRecord(raw)) return [];
+  const codes: string[] = [];
+  const push = (c: string | undefined) => {
+    if (c) codes.push(c.toUpperCase());
+  };
+  push(pickString(dig(raw, 'owner', 'iata_code')));
+  for (const slice of asArray(raw.slices)) {
+    for (const seg of asArray(dig(slice, 'segments'))) {
+      push(pickString(dig(seg, 'marketing_carrier', 'iata_code')));
+      push(pickString(dig(seg, 'operating_carrier', 'iata_code')));
+    }
+  }
+  return codes;
+}
+
+/**
+ * True if an offer involves an excluded (phantom/sandbox) carrier and should be
+ * dropped from results entirely.
+ */
+export function isExcludedOffer(raw: unknown): boolean {
+  return offerCarrierCodes(raw).some((code) => EXCLUDED_CARRIER_CODES.has(code));
+}
+
 /** Parse an ISO 8601 duration ("PT8H30M") into "Xh Ym". */
 export function formatDuration(iso: string | undefined): string {
   if (!iso) return '';
@@ -194,6 +229,9 @@ export async function searchFlights(params: FlightSearchParams): Promise<Flight[
 
     const offers = asArray(dig(data, 'data', 'offers'));
     const flights = offers
+      // Drop Duffel's synthetic "Duffel Airways" (ZZ) sandbox fares — they look
+      // real but map to no bookable schedule. See isExcludedOffer.
+      .filter((o) => !isExcludedOffer(o))
       .map(mapFlight)
       .filter((f): f is Flight => f !== undefined)
       .sort((a, b) => a.price - b.price)

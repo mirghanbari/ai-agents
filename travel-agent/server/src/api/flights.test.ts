@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapFlight, formatDuration, googleFlightsUrl } from './flights';
+import { mapFlight, formatDuration, googleFlightsUrl, isExcludedOffer } from './flights';
 
 describe('formatDuration', () => {
   it('parses hours and minutes from an ISO 8601 duration', () => {
@@ -30,6 +30,40 @@ describe('googleFlightsUrl', () => {
       'https://www.google.com/travel/flights?q=' +
         encodeURIComponent('Flights from LHR to JFK on 2026-07-01 returning 2026-07-08'),
     );
+  });
+});
+
+describe('isExcludedOffer', () => {
+  const genuine = {
+    owner: { iata_code: 'BA' },
+    slices: [{ segments: [{ marketing_carrier: { iata_code: 'BA' }, operating_carrier: { iata_code: 'BA' } }] }],
+  };
+
+  it('passes through offers from real carriers', () => {
+    expect(isExcludedOffer(genuine)).toBe(false);
+  });
+
+  it('excludes offers owned by Duffel Airways (ZZ)', () => {
+    expect(isExcludedOffer({ ...genuine, owner: { iata_code: 'ZZ' } })).toBe(true);
+  });
+
+  it('excludes offers where ZZ appears only as a marketing or operating carrier', () => {
+    const zzMarketing = {
+      owner: { iata_code: 'BA' },
+      slices: [{ segments: [{ marketing_carrier: { iata_code: 'ZZ' }, operating_carrier: { iata_code: 'BA' } }] }],
+    };
+    const zzOperating = {
+      owner: { iata_code: 'BA' },
+      slices: [{ segments: [{ marketing_carrier: { iata_code: 'BA' }, operating_carrier: { iata_code: 'ZZ' } }] }],
+    };
+    expect(isExcludedOffer(zzMarketing)).toBe(true);
+    expect(isExcludedOffer(zzOperating)).toBe(true);
+  });
+
+  it('is case-insensitive and handles malformed input', () => {
+    expect(isExcludedOffer({ owner: { iata_code: 'zz' } })).toBe(true);
+    expect(isExcludedOffer(null)).toBe(false);
+    expect(isExcludedOffer({})).toBe(false);
   });
 });
 
