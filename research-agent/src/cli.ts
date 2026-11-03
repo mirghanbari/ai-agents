@@ -1,11 +1,12 @@
 import { writeFile } from 'node:fs/promises';
-import { bumpEffort, env, type Effort } from './lib/env';
+import { bumpEffort, env, type Billing, type Effort } from './lib/env';
 import { BUDGETS, DEFAULT_BUDGET, resolveBudget, type BudgetName } from './lib/budget';
 import { research } from './agent/research';
 
 interface Args {
   question: string;
   deep: boolean;
+  billing: Billing;
   effort?: Effort;
   budget: BudgetName;
   domains?: string[];
@@ -18,11 +19,13 @@ const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const BUDGET_NAMES = Object.keys(BUDGETS) as BudgetName[];
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { question: '', deep: false, budget: DEFAULT_BUDGET, quiet: false, help: false };
+  const args: Args = { question: '', deep: false, billing: env.billing, budget: DEFAULT_BUDGET, quiet: false, help: false };
   const words: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--deep') args.deep = true;
+    else if (a === '--credits') args.billing = 'credits';
+    else if (a === '--subscription') args.billing = 'subscription';
     else if (a === '--quiet' || a === '-q') args.quiet = true;
     else if (a === '--help' || a === '-h') args.help = true;
     else if (a === '--effort') args.effort = EFFORTS.find((e) => e === argv[++i]);
@@ -51,7 +54,11 @@ function splitDomains(value: string | undefined): string[] | undefined {
 const HELP = `research-agent — autonomous research analyst (Claude + live web search)
 
 Usage:
-  npm run research -- "<question>" [--deep] [--budget <name>] [--effort <level>] [--out file.md]
+  npm run research -- "<question>" [--deep] [--credits] [--budget <name>] [--effort <level>] [--out file.md]
+
+Billing (default: ${env.billing}):
+  --subscription      Bill your Claude Pro/Max plan via the Agent SDK (uses 'claude login').
+  --credits           Bill pay-as-you-go API credits (needs ANTHROPIC_API_KEY).
 
 Options:
   --deep              Plan subtopics and research them with parallel sub-agents,
@@ -80,8 +87,8 @@ async function main(): Promise<void> {
     process.stdout.write(`${HELP}\n`);
     process.exit(args.question ? 0 : 1);
   }
-  if (!env.anthropicApiKey) {
-    err('✖ ANTHROPIC_API_KEY is not set. Add it to research-agent/.env');
+  if (args.billing === 'credits' && !env.anthropicApiKey) {
+    err('✖ ANTHROPIC_API_KEY is not set. Add it to research-agent/.env, or drop --credits to use your subscription.');
     process.exit(1);
   }
 
@@ -91,13 +98,14 @@ async function main(): Promise<void> {
   const started = Date.now();
 
   if (!args.quiet) {
-    err(`🔎 ${mode} research · ${env.anthropicModel} · effort:${effort} · budget:${args.budget}`);
+    err(`🔎 ${mode} research · ${env.anthropicModel} · ${args.billing} · effort:${effort} · budget:${args.budget}`);
     err(`   "${args.question}"\n`);
   }
 
   try {
     const result = await research(args.question, {
       mode,
+      billing: args.billing,
       effort,
       budget,
       domains: args.domains ? { allow: args.domains } : undefined,
@@ -114,11 +122,13 @@ async function main(): Promise<void> {
 
     if (!args.quiet) {
       const secs = ((Date.now() - started) / 1000).toFixed(1);
-      const cost = (result.inputTokens * 5 + result.outputTokens * 25) / 1_000_000;
-      if (result.truncated) err('\n⚠  hit the token ceiling — report may be partial (raise --budget to go further)');
+      // Opus 5.5 list price; subscription runs draw on plan usage instead.
+      const cost = (result.inputTokens * 4 + result.outputTokens * 20) / 1_000_000;
+      const billed = args.billing === 'subscription' ? 'billed to subscription' : `~$${cost.toFixed(3)}`;
+      if (result.truncated) err('\n⚠  hit a budget limit — report may be partial (raise --budget to go further)');
       err(
         `\n⏱  ${secs}s · ${result.inputTokens.toLocaleString()} in / ` +
-          `${result.outputTokens.toLocaleString()} out tokens · ~$${cost.toFixed(3)}`,
+          `${result.outputTokens.toLocaleString()} out tokens · ${billed}`,
       );
     }
   } catch (e: unknown) {

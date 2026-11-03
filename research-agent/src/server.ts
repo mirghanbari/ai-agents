@@ -1,7 +1,7 @@
 import express, { type Response } from 'express';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { bumpEffort, env, type Effort } from './lib/env';
+import { bumpEffort, env, parseBilling, type Effort } from './lib/env';
 import { resolveBudget } from './lib/budget';
 import { research } from './agent/research';
 
@@ -17,6 +17,11 @@ function send(res: Response, event: string, data: unknown): void {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+// Defaults for the UI: which billing to preselect, and whether credits are usable.
+app.get('/api/config', (_req, res) => {
+  res.json({ billing: env.billing, creditsAvailable: Boolean(env.anthropicApiKey), model: env.anthropicModel });
+});
+
 // SSE: stream a research run. GET so the browser can use EventSource.
 app.get('/api/research', async (req, res) => {
   const question = String(req.query.q ?? '').trim();
@@ -30,8 +35,9 @@ app.get('/api/research', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  if (!env.anthropicApiKey) {
-    send(res, 'error', { message: 'ANTHROPIC_API_KEY is not set on the server.' });
+  const billing = parseBilling(String(req.query.billing ?? ''), env.billing);
+  if (billing === 'credits' && !env.anthropicApiKey) {
+    send(res, 'error', { message: 'ANTHROPIC_API_KEY is not set on the server. Switch billing to Subscription.' });
     res.end();
     return;
   }
@@ -50,16 +56,26 @@ app.get('/api/research', async (req, res) => {
     .filter(Boolean);
 
   const started = Date.now();
+  // Stop the run if the browser goes away, so an abandoned tab doesn't keep
+  // spending plan usage or credits. Listen on the *response* close, guarded by
+  // writableEnded: `req` 'close' can fire once the request is consumed, before
+  // the stream has even started.
+  const abort = new AbortController();
   let cancelled = false;
-  req.on('close', () => {
-    cancelled = true;
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      cancelled = true;
+      abort.abort();
+    }
   });
 
   try {
     const result = await research(question, {
       mode,
+      billing,
       effort,
       budget,
+      signal: abort.signal,
       domains: allow.length ? { allow } : undefined,
       onText: (delta) => !cancelled && send(res, 'token', { t: delta }),
       onProgress: (line) => !cancelled && send(res, 'progress', { line }),
@@ -69,6 +85,8 @@ app.get('/api/research', async (req, res) => {
         inputTokens: result.inputTokens,
         outputTokens: result.outputTokens,
         truncated: result.truncated,
+        refused: result.refused,
+        billing,
         subtopics: result.subtopics ?? [],
         seconds: (Date.now() - started) / 1000,
         model: env.anthropicModel,
@@ -87,8 +105,6 @@ app.get('/api/research', async (req, res) => {
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`🔬 Research agent UI → http://localhost:${PORT}`);
-  if (!env.anthropicApiKey) {
-    // eslint-disable-next-line no-console
-    console.warn('⚠️  ANTHROPIC_API_KEY not set — add it to research-agent/.env');
-  }
+  // eslint-disable-next-line no-console
+  console.log(`   default billing: ${env.billing}${env.anthropicApiKey ? '' : ' (no ANTHROPIC_API_KEY: credits unavailable)'}`);
 });

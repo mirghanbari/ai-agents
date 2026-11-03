@@ -32,6 +32,20 @@ function paintStatus() {
   statusEl.textContent = `${currentPhase || 'working'} · ${elapsed()}s`;
 }
 
+// Preselect the server's default billing; disable credits if no API key is set.
+fetch('/api/config')
+  .then((r) => r.json())
+  .then((cfg) => {
+    const sel = $('billing');
+    const credits = sel.querySelector('option[value="credits"]');
+    if (!cfg.creditsAvailable) {
+      credits.disabled = true;
+      credits.textContent += ' (no API key)';
+    }
+    sel.value = cfg.billing === 'credits' && cfg.creditsAvailable ? 'credits' : 'subscription';
+  })
+  .catch(() => { /* keep the HTML default (subscription) */ });
+
 $('examples').addEventListener('click', (e) => {
   if (e.target.classList.contains('chip')) {
     $('q').value = e.target.textContent;
@@ -60,6 +74,7 @@ form.addEventListener('submit', (e) => {
   const params = new URLSearchParams({
     q,
     mode: $('mode').value,
+    billing: $('billing').value,
     budget: $('budget').value,
     effort: $('effort').value,
     domains: $('domains').value,
@@ -88,18 +103,19 @@ form.addEventListener('submit', (e) => {
     finish();
     statusEl.className = '';
     statusEl.textContent = '✓ done';
-    const cost = (d.inputTokens * 5 + d.outputTokens * 25) / 1_000_000;
+    // Opus 5.5 list price; subscription runs draw on plan usage instead.
+    const cost = (d.inputTokens * 4 + d.outputTokens * 20) / 1_000_000;
     const badges = [
       `${d.mode} · ${d.budget} · effort:${d.effort}`,
       `${d.seconds.toFixed(1)}s`,
       `${d.inputTokens.toLocaleString()} in / ${d.outputTokens.toLocaleString()} out`,
-      `~$${cost.toFixed(3)}`,
+      d.billing === 'subscription' ? '✦ subscription' : `~$${cost.toFixed(3)}`,
     ];
     footerEl.className = 'footer show';
     footerEl.innerHTML = badges.map((b) => `<span class="badge">${b}</span>`).join('');
     if (d.truncated) {
       footerEl.innerHTML =
-        '<span class="badge warn">⚠ hit token ceiling — raise budget for more</span>' + footerEl.innerHTML;
+        '<span class="badge warn">⚠ hit a budget limit — raise budget for more</span>' + footerEl.innerHTML;
     }
   });
 

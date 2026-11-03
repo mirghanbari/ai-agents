@@ -16,9 +16,9 @@ export interface DomainLimits {
  * - optional domain allow/block list restricts where it can go.
  * No API keys or scraping on our side; citations come back automatically.
  */
-export function webTools(budget: Budget, domains?: DomainLimits): Anthropic.ToolUnion[] {
+export function webTools(budget: Budget, domains?: DomainLimits): Anthropic.Beta.BetaToolUnion[] {
   // allowed_domains and blocked_domains are mutually exclusive — allow wins.
-  const search: Anthropic.WebSearchTool20260209 = {
+  const search: Anthropic.Beta.BetaWebSearchTool20260209 = {
     type: 'web_search_20260209',
     name: 'web_search',
     max_uses: budget.searchUses,
@@ -28,7 +28,7 @@ export function webTools(budget: Budget, domains?: DomainLimits): Anthropic.Tool
         ? { blocked_domains: domains.block }
         : {}),
   };
-  const fetch: Anthropic.WebFetchTool20260209 = {
+  const fetch: Anthropic.Beta.BetaWebFetchTool20260209 = {
     type: 'web_fetch_20260209',
     name: 'web_fetch',
     max_uses: budget.fetchUses,
